@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@mysten/dapp-kit": "^1.1.17",
+    "@mysten/enoki": "^1.2.17"
+  }
+}

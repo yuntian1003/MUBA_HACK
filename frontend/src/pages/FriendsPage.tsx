@@ -1,13 +1,15 @@
 // src/pages/FriendsPage.tsx
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Avatar } from '../components/Avatar';
 import {
   FriendsIcon, SearchIcon, TransferIcon, ReceiveIcon,
   ViewProfileIcon, PayIcon, ChevronRightIcon, EmptyBoxIcon,
 } from '../components/Icons';
-import { DEMO_MEMBERS } from '../constants';
+import { fetchUsers } from '../api';
+import { apiUserToMember } from '../types';
 import type { Member } from '../types';
 
 export function FriendsPage() {
@@ -15,11 +17,14 @@ export function FriendsPage() {
   const [selectedFriend, setSelectedFriend] = useState<Member | null>(null);
   const [search, setSearch] = useState('');
 
-  const filtered = DEMO_MEMBERS.filter(
-    (m) =>
-      m.name.toLowerCase().includes(search.toLowerCase()) ||
-      (m.phone ?? '').includes(search),
-  );
+  // ── Fetch all users from backend ────────────────────────────
+  const { data: rawUsers = [], isLoading, isError } = useQuery({
+    queryKey: ['users', search],
+    queryFn: () => fetchUsers(search),
+    staleTime: 20_000,
+  });
+
+  const friends: Member[] = rawUsers.map(apiUserToMember);
 
   function handleAction(action: 'profile' | 'transfer' | 'request') {
     setSelectedFriend(null);
@@ -41,7 +46,7 @@ export function FriendsPage() {
           </div>
           <div>
             <h2 style={{ fontSize: '1.25rem' }}>Friends</h2>
-            <p className="color-text3 text-sm">{DEMO_MEMBERS.length} contacts</p>
+            <p className="color-text3 text-sm">{friends.length} contacts</p>
           </div>
         </div>
 
@@ -55,17 +60,33 @@ export function FriendsPage() {
           />
           <input
             className="input"
-            placeholder="Search by name or phone…"
+            placeholder="Search by name or address…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ paddingLeft: 40 }}
           />
         </div>
 
+        {/* Loading state */}
+        {isLoading && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {[1, 2, 3].map((n) => (
+              <div key={n} className="skeleton" style={{ height: 64, borderRadius: 18 }} />
+            ))}
+          </div>
+        )}
+
+        {/* Error state */}
+        {isError && (
+          <div className="clay-card flat" style={{ padding: '24px', textAlign: 'center' }}>
+            <p className="color-text3 text-sm">⚠️ Could not connect to server. Make sure the backend is running on port 3000.</p>
+          </div>
+        )}
+
         {/* Avatar grid */}
-        {filtered.length > 0 && (
+        {!isLoading && !isError && friends.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 32 }}>
-            {filtered.map((m, i) => (
+            {friends.map((m, i) => (
               <motion.button
                 key={m.id}
                 initial={{ opacity: 0, scale: 0.8 }}
@@ -85,14 +106,6 @@ export function FriendsPage() {
                     boxShadow: `0 6px 18px ${m.avatarColor}55`,
                     transition: 'transform 220ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 220ms',
                   }}
-                  onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => {
-                    (e.currentTarget as HTMLDivElement).style.transform = 'scale(1.1) translateY(-3px)';
-                    (e.currentTarget as HTMLDivElement).style.boxShadow = `0 10px 28px ${m.avatarColor}77`;
-                  }}
-                  onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => {
-                    (e.currentTarget as HTMLDivElement).style.transform = '';
-                    (e.currentTarget as HTMLDivElement).style.boxShadow = `0 6px 18px ${m.avatarColor}55`;
-                  }}
                 />
                 <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-2)', textAlign: 'center' }}>
                   {m.name.split(' ')[0]}
@@ -103,37 +116,46 @@ export function FriendsPage() {
         )}
 
         {/* List view */}
-        <p className="section-title" style={{ marginBottom: 10 }}>ALL CONTACTS</p>
-        {filtered.length > 0 ? (
-          filtered.map((m, i) => (
-            <motion.div
-              key={m.id}
-              initial={{ opacity: 0, x: -16 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.05 }}
-              className="list-row"
-              onClick={() => setSelectedFriend(m)}
-            >
-              <Avatar member={m} />
-              <div className="list-row-content">
-                <div className="list-row-title">{m.name}</div>
-                <div className="list-row-sub">{m.phone ?? m.walletAddress.slice(0, 18) + '…'}</div>
+        {!isLoading && !isError && (
+          <>
+            <p className="section-title" style={{ marginBottom: 10 }}>ALL CONTACTS</p>
+            {friends.length > 0 ? (
+              friends.map((m, i) => (
+                <motion.div
+                  key={m.id}
+                  initial={{ opacity: 0, x: -16 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.05 }}
+                  className="list-row"
+                  onClick={() => setSelectedFriend(m)}
+                >
+                  <Avatar member={m} />
+                  <div className="list-row-content">
+                    <div className="list-row-title">{m.name}</div>
+                    <div className="list-row-sub" style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                      {m.walletAddress.slice(0, 20)}…
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={(e) => { e.stopPropagation(); navigate('/split'); }}
+                    style={{ padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 5 }}
+                  >
+                    <PayIcon size={13} color="#fff" strokeWidth={2} />
+                    Pay
+                  </button>
+                </motion.div>
+              ))
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                <EmptyBoxIcon size={48} color="var(--lavender)" strokeWidth={1.3} />
+                {search
+                  ? <p className="color-text3">No users found for "{search}"</p>
+                  : <p className="color-text3">No users yet. Save your profile to appear here!</p>
+                }
               </div>
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={(e) => { e.stopPropagation(); navigate('/split'); }}
-                style={{ padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 5 }}
-              >
-                <PayIcon size={13} color="#fff" strokeWidth={2} />
-                Pay
-              </button>
-            </motion.div>
-          ))
-        ) : (
-          <div style={{ textAlign: 'center', padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-            <EmptyBoxIcon size={48} color="var(--lavender)" strokeWidth={1.3} />
-            <p className="color-text3">No contacts found for "{search}"</p>
-          </div>
+            )}
+          </>
         )}
       </motion.div>
 
@@ -168,7 +190,6 @@ export function FriendsPage() {
                 />
                 <div style={{ textAlign: 'center' }}>
                   <h3 style={{ marginBottom: 4 }}>{selectedFriend.name}</h3>
-                  <p className="text-sm color-text3">{selectedFriend.phone ?? 'No phone'}</p>
                   <p
                     className="text-xs color-text3 truncate"
                     style={{ maxWidth: 220, margin: '4px auto 0', fontFamily: 'monospace' }}

@@ -152,6 +152,8 @@ export function HomePage() {
   }
 
   const shortAddr = account.address.slice(0, 8) + '…' + account.address.slice(-6);
+  const localName = localStorage.getItem(`nickname-${account.address}`);
+  const displayName = localName || account.label || shortAddr;
 
   return (
     <main className="page">
@@ -166,7 +168,7 @@ export function HomePage() {
           <Avatar name={account.address} color="#9F9DF3" size="lg" />
           <div>
             <p className="text-sm color-text3" style={{ marginBottom: 2 }}>Welcome back</p>
-            <h2 style={{ fontSize: '1.05rem' }}>{shortAddr}</h2>
+            <h2 style={{ fontSize: '1.05rem' }}>{displayName}</h2>
           </div>
         </div>
       </motion.div>

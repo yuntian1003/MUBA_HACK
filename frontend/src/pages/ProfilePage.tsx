@@ -1,21 +1,18 @@
 // src/pages/ProfilePage.tsx
-import { useState } from 'react';
-import { useCurrentAccount, useCurrentClient } from '@mysten/dapp-kit-react';
+import { useState, useEffect } from 'react';
+import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
-import { useQuery } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Avatar } from '../components/Avatar';
 import {
   WalletIcon, ShieldIcon, GlobeIcon, CheckCircleIcon,
-  AlertCircleIcon, CopyIcon, EditIcon, HistoryIcon,
+  CopyIcon, EditIcon, HistoryIcon,
   LinkIcon, EmptyBoxIcon, LockIcon,
 } from '../components/Icons';
-import { Logo } from '../components/Logo';
 import { AVATAR_COLORS } from '../constants';
+import { upsertUser } from '../api';
 
-function shortAddr(addr: string) {
-  return addr.slice(0, 10) + '…' + addr.slice(-8);
-}
 
 // Inline 2-D illustration for the connect screen
 function ConnectIllustration() {
@@ -37,31 +34,36 @@ function ConnectIllustration() {
 
 export function ProfilePage() {
   const account = useCurrentAccount();
-  const client = useCurrentClient();
+  const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState('');
   const [editing, setEditing] = useState(false);
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
   const [copied, setCopied] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  const { data: txHistory, isLoading: txLoading } = useQuery({
-    queryKey: ['tx-history', account?.address],
-    enabled: !!account,
-    queryFn: async () => {
-      if (!account || !client) return [];
-      try {
-        const result = await client.queryTransactionBlocks({
-          filter: { FromAddress: account.address },
-          options: { showEffects: true, showInput: true },
-          limit: 10,
-          order: 'descending',
-        });
-        return result.data ?? [];
-      } catch {
-        return [];
-      }
-    },
-    staleTime: 30_000,
-  });
+  useEffect(() => {
+    if (account) {
+      setDisplayName(localStorage.getItem(`nickname-${account.address}`) || account.label || '');
+    }
+  }, [account]);
+
+  async function handleSave() {
+    if (!account) { setEditing(false); return; }
+    setSaveMsg('saving');
+    try {
+      // Save to localStorage for instant offline reads
+      localStorage.setItem(`nickname-${account.address}`, displayName);
+      // Sync to backend so others can see the user in Friends/Communities
+      await upsertUser(account.address, displayName, selectedColor);
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setSaveMsg('saved');
+      setTimeout(() => setSaveMsg('idle'), 2500);
+    } catch {
+      setSaveMsg('error');
+      setTimeout(() => setSaveMsg('idle'), 2500);
+    }
+    setEditing(false);
+  }
 
   async function copyAddress() {
     if (!account) return;
@@ -191,13 +193,19 @@ export function ProfilePage() {
                   onChange={(e) => setDisplayName(e.target.value)}
                   style={{ flex: 1 }}
                 />
-                <button className="btn btn-primary btn-sm" onClick={() => setEditing(false)}>
-                  Save
+                <button className="btn btn-primary btn-sm" onClick={handleSave}>
+                  {saveMsg === 'saving' ? 'Saving…' : 'Save'}
                 </button>
               </div>
             ) : (
               <div style={{ textAlign: 'center' }}>
                 <h3 style={{ marginBottom: 6 }}>{displayName || 'Anonymous'}</h3>
+                {saveMsg === 'saved' && (
+                  <p className="text-sm" style={{ color: '#3a7a3c', marginBottom: 6 }}>✅ Profile saved to server!</p>
+                )}
+                {saveMsg === 'error' && (
+                  <p className="text-sm" style={{ color: '#c0446b', marginBottom: 6 }}>⚠️ Saved locally only (server offline)</p>
+                )}
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => setEditing(true)}
@@ -279,82 +287,30 @@ export function ProfilePage() {
           </div>
         </div>
 
-        {/* Transaction history */}
+        {/* Transaction history link */}
         <div className="flex items-center gap-8 mb-12">
           <HistoryIcon size={16} color="var(--text-3)" strokeWidth={2} />
           <p className="section-title" style={{ margin: 0 }}>TRANSACTION HISTORY</p>
         </div>
 
-        {txLoading && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {[1, 2, 3].map((n) => (
-              <div key={n} className="skeleton" style={{ height: 64, borderRadius: 18 }} />
-            ))}
-          </div>
-        )}
-
-        {!txLoading && txHistory && txHistory.length > 0 && (
-          <div>
-            {txHistory.map((tx, i) => {
-              const digest = tx.digest;
-              const shortDigest = digest.slice(0, 8) + '…' + digest.slice(-6);
-              const ts = tx.timestampMs
-                ? new Date(Number(tx.timestampMs)).toLocaleDateString('en-MY', {
-                  month: 'short', day: 'numeric',
-                  hour: '2-digit', minute: '2-digit',
-                })
-                : 'Unknown time';
-              const status = tx.effects?.status?.status ?? 'unknown';
-              const success = status === 'success';
-              return (
-                <motion.a
-                  key={digest}
-                  initial={{ opacity: 0, x: -16 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  href={`https://testnet.suivision.xyz/txblock/${digest}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="list-row"
-                  style={{ textDecoration: 'none' }}
-                >
-                  <div style={{
-                    width: 40, height: 40,
-                    borderRadius: 14,
-                    background: success ? 'rgba(201,235,202,0.4)' : 'rgba(255,155,179,0.2)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0,
-                  }}>
-                    {success
-                      ? <CheckCircleIcon size={20} color="#3a7a3c" strokeWidth={2} />
-                      : <AlertCircleIcon size={20} color="#c0446b" strokeWidth={2} />}
-                  </div>
-                  <div className="list-row-content">
-                    <div className="list-row-title" style={{ fontSize: '0.88rem', fontFamily: 'monospace' }}>
-                      {shortDigest}
-                    </div>
-                    <div className="list-row-sub">{ts}</div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className={`badge ${success ? 'badge-green' : 'badge-pink'}`}>{status}</span>
-                    <LinkIcon size={14} color="var(--text-3)" strokeWidth={2} />
-                  </div>
-                </motion.a>
-              );
-            })}
-          </div>
-        )}
-
-        {!txLoading && (!txHistory || txHistory.length === 0) && (
-          <div
-            className="clay-card flat"
-            style={{ padding: '36px 24px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}
+        <div
+          className="clay-card flat"
+          style={{ padding: '36px 24px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}
+        >
+          <EmptyBoxIcon size={48} color="var(--lavender)" strokeWidth={1.3} />
+          <h3>View on Explorer</h3>
+          <p className="text-sm color-text3">Tap below to see your full transaction history on SuiVision</p>
+          <a
+            href={`https://testnet.suivision.xyz/account/${account?.address}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-ghost btn-sm"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            <EmptyBoxIcon size={48} color="var(--lavender)" strokeWidth={1.3} />
-            <h3>No transactions yet</h3>
-            <p className="text-sm color-text3">Your on-chain payment history will appear here</p>
-          </div>
-        )}
+            <LinkIcon size={14} color="var(--deep)" strokeWidth={2} />
+            Open SuiVision
+          </a>
+        </div>
       </motion.div>
     </main>
   );

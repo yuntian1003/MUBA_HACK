@@ -33,3 +33,7 @@ jspm_packages/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Firebase service account key (keep secret)
+backend/*.json
+*.json

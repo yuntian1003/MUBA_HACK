@@ -1,4 +1,4 @@
-// smartsplit/Move.toml
+# smartsplit/Move.toml
 [package]
 name = "smartsplit"
 edition = "2024.beta"

@@ -54,29 +54,39 @@ export function useSplitTransaction() {
     setResult(null);
 
     try {
-      // Build PTB: split gas coin → transfer each piece to a recipient
+      // Build PTB: split gas coin → pass to smart contract
       const tx = new Transaction();
 
-      // Split off N amounts from the gas coin (wallet owns gas)
-      const amounts = recipients.map(() => tx.pure.u64(perPersonMist));
-      const coins = tx.splitCoins(tx.gas, amounts);
+      // Split off the total amount from the gas coin
+      const totalMist = perPersonMist * BigInt(recipients.length);
+      const splitCoins = tx.splitCoins(tx.gas, [tx.pure.u64(totalMist)]);
 
-      // Transfer each coin to its recipient
-      recipients.forEach((member, i) => {
-        tx.transferObjects([coins[i]], tx.pure.address(member.walletAddress));
+      const addresses = recipients.map((m) => m.walletAddress);
+      const packageId = import.meta.env.VITE_PACKAGE_ID;
+
+      if (!packageId) {
+        throw new Error("VITE_PACKAGE_ID is not configured in .env");
+      }
+
+      tx.moveCall({
+        target: `${packageId}::smartsplit::execute_equal_split`,
+        arguments: [
+          splitCoins[0],
+          tx.pure.vector('address', addresses),
+          tx.pure.string(purpose || "SmartSplit"),
+        ],
       });
 
-      // Add a memo via MoveCall to a stub function if package is deployed
-      // For now, just do the split + transfer
       tx.setGasBudget(50_000_000); // 0.05 SUI
 
       const txResult = await signAndExecuteTransaction({ transaction: tx });
 
-      if (txResult.$kind === 'FailedTransaction') {
-        throw new Error(`Transaction failed: ${JSON.stringify(txResult.FailedTransaction?.error ?? 'unknown')}`);
+      // Extract digest directly from txResult
+      const digest = (txResult as any).digest || (txResult as any).Transaction?.digest || '';
+      
+      if (!digest) {
+        throw new Error('Transaction failed or digest not found');
       }
-
-      const digest = (txResult as { Transaction?: { digest?: string } }).Transaction?.digest ?? '';
 
       // Wait for indexer before invalidating caches
       if (digest) {

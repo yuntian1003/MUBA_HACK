@@ -1,7 +1,7 @@
 {
-  "name": "frontend",
+  "name": "smartsplit",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,11 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@mysten/dapp-kit": "^1.1.17",
-    "@mysten/enoki": "^1.2.17",
-    "@mysten/sui": "^2.27.0",
+    "@mysten/dapp-kit-react": "^2.1.22",
+    "@mysten/sui": "^2.27.1",
+    "@tanstack/react-query": "^5.102.8",
+    "framer-motion": "^13.1.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

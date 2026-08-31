@@ -39,12 +39,15 @@ export function useSplitTransaction() {
       return null;
     }
 
-    const perPersonSui = totalAmountSui / recipients.length;
+    // Equal split: total includes the payer's own share.
+    // Each person (payer + N recipients) pays totalAmountSui / (N+1).
+    // The PTB only transfers the recipients' shares — payer keeps their own portion.
+    const perPersonSui = totalAmountSui / (recipients.length + 1);
     const perPersonMist = BigInt(Math.round(perPersonSui * Number(MIST_PER_SUI)));
 
-    // Validate total (rounding guard)
-    const totalMist = perPersonMist * BigInt(recipients.length);
-    if (totalMist <= 0n) {
+    // Total to send out = N recipients × per-person share
+    const totalToSendMist = perPersonMist * BigInt(recipients.length);
+    if (totalToSendMist <= 0n) {
       setError('Split amounts too small');
       return null;
     }
@@ -57,9 +60,8 @@ export function useSplitTransaction() {
       // Build PTB: split gas coin → pass to smart contract
       const tx = new Transaction();
 
-      // Split off the total amount from the gas coin
-      const totalMist = perPersonMist * BigInt(recipients.length);
-      const splitCoins = tx.splitCoins(tx.gas, [tx.pure.u64(totalMist)]);
+      // Split off exactly the recipients' total from the gas coin
+      const splitCoins = tx.splitCoins(tx.gas, [tx.pure.u64(totalToSendMist)]);
 
       const addresses = recipients.map((m) => m.walletAddress);
       const packageId = import.meta.env.VITE_PACKAGE_ID;

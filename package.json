@@ -1,4 +1,14 @@
 {
+  "name": "smartsplit-root",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "build": "npm --prefix frontend run build",
+    "test:move": "cd smartsplit && sui move test",
+    "build:move": "cd smartsplit && sui move build"
+  },
   "dependencies": {
     "@mysten/dapp-kit": "^1.1.17",
     "@mysten/enoki": "^1.2.17"

@@ -2,7 +2,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
-import { Logo } from '../components/Logo';
 import { Avatar } from '../components/Avatar';
 import {
   SplitIcon, CommunityIcon, FriendsIcon,

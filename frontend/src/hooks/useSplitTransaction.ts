@@ -1,20 +1,23 @@
 // src/hooks/useSplitTransaction.ts
 import { useState } from 'react';
 import { Transaction } from '@mysten/sui/transactions';
-import { useCurrentClient } from '@mysten/dapp-kit-react';
-import { useDAppKit } from '@mysten/dapp-kit-react';
+import { useCurrentClient, useDAppKit } from '@mysten/dapp-kit-react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Member } from '../types';
 import { MIST_PER_SUI } from '../constants';
 
-interface SplitParams {
-  recipients: Member[];
-  totalAmountSui: number;
-  purpose: string;
-  direction: 'pay' | 'receive';
+export interface RecipientShare {
+  member: Member;
+  amountSui: number;
 }
 
-interface SplitResult {
+export interface SplitParams {
+  shares: RecipientShare[];
+  purpose: string;
+  direction?: 'pay' | 'receive';
+}
+
+export interface SplitResult {
   digest: string;
   amounts: { member: Member; amountSui: number }[];
 }
@@ -29,26 +32,25 @@ export function useSplitTransaction() {
   const [result, setResult] = useState<SplitResult | null>(null);
 
   async function execute(params: SplitParams): Promise<SplitResult | null> {
-    const { recipients, totalAmountSui, purpose } = params;
-    if (recipients.length === 0) {
+    const { shares } = params;
+    if (!shares || shares.length === 0) {
       setError('Select at least one recipient');
       return null;
     }
-    if (totalAmountSui <= 0) {
-      setError('Total amount must be greater than 0');
+
+    const invalidShare = shares.find((s) => s.amountSui <= 0 || isNaN(s.amountSui));
+    if (invalidShare) {
+      setError(`Invalid amount for ${invalidShare.member.name}`);
       return null;
     }
 
-    // Equal split: total includes the payer's own share.
-    // Each person (payer + N recipients) pays totalAmountSui / (N+1).
-    // The PTB only transfers the recipients' shares — payer keeps their own portion.
-    const perPersonSui = totalAmountSui / (recipients.length + 1);
-    const perPersonMist = BigInt(Math.round(perPersonSui * Number(MIST_PER_SUI)));
+    const mistAmounts = shares.map((s) =>
+      BigInt(Math.max(1, Math.round(s.amountSui * Number(MIST_PER_SUI))))
+    );
 
-    // Total to send out = N recipients × per-person share
-    const totalToSendMist = perPersonMist * BigInt(recipients.length);
+    const totalToSendMist = mistAmounts.reduce((a, b) => a + b, 0n);
     if (totalToSendMist <= 0n) {
-      setError('Split amounts too small');
+      setError('Total split amount must be greater than 0');
       return null;
     }
 
@@ -57,54 +59,102 @@ export function useSplitTransaction() {
     setResult(null);
 
     try {
-      // Build PTB: split gas coin → pass to smart contract
+      // Build atomic PTB: split off individual amounts directly from gas coin
       const tx = new Transaction();
 
-      // Split off exactly the recipients' total from the gas coin
-      const splitCoins = tx.splitCoins(tx.gas, [tx.pure.u64(totalToSendMist)]);
+      // Split coin into distinct custom amounts for each recipient
+      const splitCoins = tx.splitCoins(
+        tx.gas,
+        mistAmounts.map((amt) => tx.pure.u64(amt))
+      );
 
-      const addresses = recipients.map((m) => m.walletAddress);
-      const packageId = import.meta.env.VITE_PACKAGE_ID;
-
-      if (!packageId) {
-        throw new Error("VITE_PACKAGE_ID is not configured in .env");
+      // Atomically transfer each allocated coin to its designated recipient
+      for (let i = 0; i < shares.length; i++) {
+        tx.transferObjects(
+          [splitCoins[i]],
+          tx.pure.address(shares[i].member.walletAddress)
+        );
       }
 
-      tx.moveCall({
-        target: `${packageId}::smartsplit::execute_equal_split`,
-        arguments: [
-          splitCoins[0],
-          tx.pure.vector('address', addresses),
-          tx.pure.string(purpose || "SmartSplit"),
-        ],
+      // Safety timeout race: prevent UI hanging if wallet extension popup is closed
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                'Wallet request timed out. Please unlock your wallet or check the popup.'
+              )
+            ),
+          60_000
+        );
       });
 
-      tx.setGasBudget(50_000_000); // 0.05 SUI
+      const txResult = await Promise.race([
+        signAndExecuteTransaction({ transaction: tx }),
+        timeoutPromise,
+      ]);
 
-      const txResult = await signAndExecuteTransaction({ transaction: tx });
-
-      // Extract digest directly from txResult
-      const digest = (txResult as any).digest || (txResult as any).Transaction?.digest || '';
-      
-      if (!digest) {
-        throw new Error('Transaction failed or digest not found');
+      if ((txResult as any).$kind === 'FailedTransaction') {
+        const failureMsg =
+          (txResult as any).FailedTransaction?.status?.error?.message ||
+          'Transaction aborted on-chain';
+        throw new Error(failureMsg);
       }
 
-      // Wait for indexer before invalidating caches
+      // Extract digest directly from txResult
+      const digest =
+        (txResult as any).digest || (txResult as any).Transaction?.digest || '';
+
+      if (!digest) {
+        throw new Error('Transaction was submitted but no digest was returned.');
+      }
+
+      // Wait for indexer before invalidating queries
       if (digest) {
-        await client.waitForTransaction({ digest });
+        try {
+          if ((client as any).core?.waitForTransaction) {
+            await (client as any).core.waitForTransaction({ digest });
+          } else if (client.waitForTransaction) {
+            await client.waitForTransaction({ digest });
+          }
+        } catch (indexerErr) {
+          console.warn('Indexer wait warning:', indexerErr);
+        }
       }
       await queryClient.invalidateQueries({ queryKey: ['tx-history'] });
 
       const splitResult: SplitResult = {
         digest,
-        amounts: recipients.map((m) => ({ member: m, amountSui: perPersonSui })),
+        amounts: shares.map((s) => ({
+          member: s.member,
+          amountSui: s.amountSui,
+        })),
       };
       setResult(splitResult);
       return splitResult;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+    } catch (err: any) {
+      let rawMsg = err instanceof Error ? err.message : String(err);
+      if (
+        rawMsg.includes('Rejected') ||
+        rawMsg.includes('rejected') ||
+        rawMsg.includes('denied') ||
+        rawMsg.includes('User rejected')
+      ) {
+        rawMsg = 'Transaction cancelled in wallet.';
+      } else if (
+        rawMsg.includes('password') ||
+        rawMsg.includes('locked') ||
+        rawMsg.includes('lock')
+      ) {
+        rawMsg =
+          'Wallet locked or incorrect password. Please unlock your wallet and try again.';
+      } else if (
+        rawMsg.includes('Insufficient') ||
+        rawMsg.includes('insufficient')
+      ) {
+        rawMsg = 'Insufficient SUI balance for this split and gas fees.';
+      }
+      setError(rawMsg);
       return null;
     } finally {
       setIsLoading(false);
@@ -112,6 +162,7 @@ export function useSplitTransaction() {
   }
 
   function reset() {
+    setIsLoading(false);
     setError(null);
     setResult(null);
   }

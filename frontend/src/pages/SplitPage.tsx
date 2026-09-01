@@ -57,6 +57,8 @@ export function SplitPage() {
   const [totalAmount, setTotalAmount] = useState('');
   const [direction, setDirection] = useState<'pay' | 'receive'>('pay');
   const [selectedCommunity, setSelectedCommunity] = useState('');
+  const [splitMode, setSplitMode] = useState<'equal' | 'uneven'>('equal');
+  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -87,20 +89,45 @@ export function SplitPage() {
     return total / (selected.length + 1);
   }, [totalAmount, selected]);
 
+  const customTotal = useMemo(() => {
+    return selected.reduce((sum, m) => {
+      const val = parseFloat(customAmounts[m.id] || '0');
+      return sum + (isNaN(val) ? 0 : val);
+    }, 0);
+  }, [selected, customAmounts]);
+
+  const shares = useMemo(() => {
+    if (splitMode === 'equal') {
+      return selected.map((m) => ({
+        member: m,
+        amountSui: perPerson,
+      }));
+    } else {
+      return selected.map((m) => ({
+        member: m,
+        amountSui: parseFloat(customAmounts[m.id] || '0') || 0,
+      }));
+    }
+  }, [splitMode, selected, perPerson, customAmounts]);
+
   const validationOk = useMemo(() => {
     if (!purpose.trim()) return false;
-    const total = parseFloat(totalAmount);
-    if (!total || total <= 0) return false;
     if (selected.length === 0) return false;
-    const computed = perPerson * (selected.length + 1);
-    return Math.abs(computed - total) < 0.001;
-  }, [purpose, totalAmount, selected, perPerson]);
+
+    if (splitMode === 'equal') {
+      const total = parseFloat(totalAmount);
+      if (!total || total <= 0) return false;
+      const computed = perPerson * (selected.length + 1);
+      return Math.abs(computed - total) < 0.001;
+    } else {
+      return shares.length > 0 && shares.every((s) => s.amountSui > 0 && !isNaN(s.amountSui));
+    }
+  }, [purpose, totalAmount, selected, perPerson, splitMode, shares]);
 
   async function handleExecute() {
     if (!validationOk) return;
     const res = await execute({
-      recipients: selected,
-      totalAmountSui: parseFloat(totalAmount),
+      shares,
       purpose,
       direction,
     });
@@ -114,6 +141,8 @@ export function SplitPage() {
     setPurpose('');
     setTotalAmount('');
     setDirection('pay');
+    setSplitMode('equal');
+    setCustomAmounts({});
   }
 
   if (!account) {
@@ -277,41 +306,128 @@ export function SplitPage() {
                 />
               </div>
 
+              {/* Split Mode Selector */}
               <div className="form-group">
-                <label className="form-label">Total Amount (SUI)</label>
-                <input
-                  className="input"
-                  type="number"
-                  placeholder="0.00"
-                  min="0"
-                  step="0.1"
-                  value={totalAmount}
-                  onChange={(e) => setTotalAmount(e.target.value)}
-                  style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--deep)' }}
-                />
+                <label className="form-label">Split Type</label>
+                <div className="toggle-group">
+                  <button
+                    className={`toggle-btn ${splitMode === 'equal' ? 'active' : ''}`}
+                    onClick={() => setSplitMode('equal')}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
+                  >
+                    Equal Split ({selected.length + 1} ways)
+                  </button>
+                  <button
+                    className={`toggle-btn ${splitMode === 'uneven' ? 'active' : ''}`}
+                    onClick={() => {
+                      setSplitMode('uneven');
+                      // Initialize custom amounts if empty
+                      if (Object.keys(customAmounts).length === 0 && selected.length > 0) {
+                        const init: Record<string, string> = {};
+                        const defaultAmt = totalAmount ? (parseFloat(totalAmount) / (selected.length + 1)).toFixed(3) : '0.05';
+                        selected.forEach(m => { init[m.id] = defaultAmt; });
+                        setCustomAmounts(init);
+                      }
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
+                  >
+                    Uneven / Itemized Split
+                  </button>
+                </div>
               </div>
 
-              {selected.length > 0 && parseFloat(totalAmount) > 0 && (
-                <div className="clay-card flat" style={{ padding: '16px 20px', background: 'rgba(201,235,202,0.2)' }}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm color-text3">Per person (equal split)</p>
-                      <div className="amount-big" style={{ fontSize: '2rem', marginTop: 4 }}>
-                        <span className="amount-currency">SUI</span>
-                        {perPerson.toFixed(4)}
+              {splitMode === 'equal' ? (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Total Bill Amount (SUI)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      placeholder="0.00"
+                      min="0"
+                      step="0.01"
+                      value={totalAmount}
+                      onChange={(e) => setTotalAmount(e.target.value)}
+                      style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--deep)' }}
+                    />
+                  </div>
+
+                  {selected.length > 0 && parseFloat(totalAmount) > 0 && (
+                    <div className="clay-card flat" style={{ padding: '16px 20px', background: 'rgba(201,235,202,0.2)' }}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm color-text3">Per person (equal share)</p>
+                          <div className="amount-big" style={{ fontSize: '2rem', marginTop: 4 }}>
+                            <span className="amount-currency">SUI</span>
+                            {perPerson.toFixed(4)}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <p className="text-sm color-text3">Split {selected.length + 1} ways</p>
+                          <p className="text-xs color-text3 mt-8">Payer + {selected.length} recipients</p>
+                        </div>
+                      </div>
+                      <div className="divider" style={{ margin: '12px 0' }} />
+                      <div className="flex items-center gap-8">
+                        <CheckCircleIcon size={15} color="#3a7a3c" strokeWidth={2.2} />
+                        <span className="text-sm" style={{ color: '#3a7a3c' }}>
+                          Exact split · {perPerson.toFixed(4)} SUI per participant
+                        </span>
                       </div>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <p className="text-sm color-text3">Split {selected.length + 1} ways</p>
-                      <p className="text-xs color-text3 mt-8">including you</p>
-                    </div>
+                  )}
+                </>
+              ) : (
+                /* Uneven Mode: Input exact amounts for each recipient */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div className="flex justify-between items-center">
+                    <label className="form-label" style={{ margin: 0 }}>Recipient Shares (Uneven)</label>
+                    <span className="text-sm font-bold color-deep">Total: {customTotal.toFixed(4)} SUI</span>
                   </div>
-                  <div className="divider" style={{ margin: '12px 0' }} />
-                  <div className="flex items-center gap-8">
-                    <CheckCircleIcon size={15} color="#3a7a3c" strokeWidth={2.2} />
-                    <span className="text-sm" style={{ color: '#3a7a3c' }}>
-                      Validation passed · {perPerson.toFixed(4)} × {selected.length + 1} = {parseFloat(totalAmount).toFixed(4)} SUI
-                    </span>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {selected.map((m) => (
+                      <div
+                        key={m.id}
+                        className="clay-card flat"
+                        style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}
+                      >
+                        <Avatar member={m} size="sm" />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="font-semibold text-sm truncate">{m.name}</div>
+                          <div className="text-xs color-text3 truncate">{m.walletAddress.slice(0, 10)}…</div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input
+                            className="input"
+                            type="number"
+                            placeholder="0.00"
+                            min="0"
+                            step="0.01"
+                            value={customAmounts[m.id] ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setCustomAmounts((prev) => ({ ...prev, [m.id]: val }));
+                            }}
+                            style={{
+                              width: 100,
+                              padding: '8px 10px',
+                              textAlign: 'right',
+                              fontWeight: 700,
+                              fontSize: '0.95rem',
+                            }}
+                          />
+                          <span className="text-xs font-semibold color-text3">SUI</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="clay-card flat" style={{ padding: '12px 16px', background: 'rgba(159,157,243,0.08)' }}>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="color-text2">Recipients sum to send:</span>
+                      <span className="font-bold color-deep">{customTotal.toFixed(4)} SUI</span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -374,9 +490,16 @@ export function SplitPage() {
               <p className="section-title" style={{ marginBottom: 12 }}>PAYMENT SUMMARY</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {[
-                  { label: 'Purpose',   value: purpose },
-                  { label: 'Total',     value: `${totalAmount} SUI`, bold: true },
-                  { label: 'Per person', value: `${perPerson.toFixed(4)} SUI` },
+                  { label: 'Purpose', value: purpose },
+                  {
+                    label: 'Total Distribution',
+                    value: `${(splitMode === 'equal' ? parseFloat(totalAmount) || 0 : customTotal).toFixed(4)} SUI`,
+                    bold: true,
+                  },
+                  {
+                    label: 'Split Mode',
+                    value: splitMode === 'equal' ? `Equal (${perPerson.toFixed(4)} SUI each)` : 'Uneven / Itemized',
+                  },
                 ].map(({ label, value, bold }) => (
                   <div key={label} className="flex justify-between items-center">
                     <span className="color-text3 text-sm">{label}</span>
@@ -405,16 +528,16 @@ export function SplitPage() {
               </div>
             </div>
 
-            <p className="section-title" style={{ marginBottom: 10 }}>RECIPIENTS ({selected.length})</p>
+            <p className="section-title" style={{ marginBottom: 10 }}>RECIPIENTS ({shares.length})</p>
             <div style={{ marginBottom: 20 }}>
-              {selected.map((m) => (
-                <div key={m.id} className="flex items-center gap-12 list-row" style={{ cursor: 'default' }}>
-                  <Avatar member={m} />
+              {shares.map(({ member, amountSui }) => (
+                <div key={member.id} className="flex items-center gap-12 list-row" style={{ cursor: 'default' }}>
+                  <Avatar member={member} />
                   <div className="list-row-content">
-                    <div className="list-row-title">{m.name}</div>
-                    <div className="list-row-sub truncate">{m.walletAddress}</div>
+                    <div className="list-row-title">{member.name}</div>
+                    <div className="list-row-sub truncate">{member.walletAddress}</div>
                   </div>
-                  <span className="font-bold color-deep">{perPerson.toFixed(3)} SUI</span>
+                  <span className="font-bold color-deep">+{amountSui.toFixed(4)} SUI</span>
                 </div>
               ))}
             </div>
@@ -447,11 +570,19 @@ export function SplitPage() {
             <div className="flex gap-12">
               <button
                 className="btn btn-ghost flex-1"
-                onClick={() => setStep(2)}
-                disabled={isLoading}
+                onClick={() => {
+                  if (isLoading) reset();
+                  else setStep(2);
+                }}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
-                <BackIcon size={15} color="var(--text-2)" strokeWidth={2} /> Back
+                {isLoading ? (
+                  'Cancel / Reset'
+                ) : (
+                  <>
+                    <BackIcon size={15} color="var(--text-2)" strokeWidth={2} /> Back
+                  </>
+                )}
               </button>
               <button
                 className="btn btn-primary flex-1"

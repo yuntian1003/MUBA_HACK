@@ -19,7 +19,7 @@ export const dAppKit = createDAppKit({
       network: network as 'mainnet' | 'testnet',
       baseUrl: GRPC_URLS[network],
     }),
-  autoConnect: true,
+  autoConnect: false,
 });
 
 declare module '@mysten/dapp-kit-react' {

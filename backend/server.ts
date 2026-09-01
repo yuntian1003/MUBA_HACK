@@ -2,9 +2,22 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { db } from './firebase'; // Firestore instance
+import admin from 'firebase-admin';
+import path from 'path';
 
 dotenv.config();
+
+// Initialise Firebase Admin SDK
+const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ??
+    path.resolve(__dirname, 'firebase-key.json');
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccountPath as string),
+  });
+}
+
+const db = admin.firestore();
 
 const app = express();
 app.use(cors());
@@ -42,7 +55,7 @@ app.post('/api/users', async (req, res) => {
     const { address, nickname, avatarColor } = req.body;
     if (!address) return res.status(400).json({ error: 'Address required' });
     await db.collection('users').doc(address).set(
-      { nickname, avatarColor: avatarColor || '#9F9DF3' },
+      { address, nickname, avatarColor: avatarColor || '#9F9DF3' },
       { merge: true }
     );
     res.json({ success: true });
@@ -57,7 +70,7 @@ app.get('/api/users', async (req, res) => {
   try {
     const q = (req.query.q as string || '').toLowerCase();
     const snapshot = await db.collection('users').get();
-    let users = snapshot.docs.map(d => d.data());
+    let users = snapshot.docs.map(d => ({ ...d.data(), address: d.id }));
     if (q) {
       users = users.filter(u =>
         (u.nickname && u.nickname.toLowerCase().includes(q)) ||
@@ -66,7 +79,7 @@ app.get('/api/users', async (req, res) => {
     }
     res.json(users);
   } catch (e) {
-    console.error(e);
+    console.error('Error fetching users:', e);
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
@@ -75,7 +88,7 @@ app.get('/api/users', async (req, res) => {
 // Get all communities with their members
 app.get('/api/communities', async (req, res) => {
   try {
-    const commSnap = await db.collection('communities').orderBy('lastActivity', 'desc').get();
+    const commSnap = await db.collection('communities').get();
     const communities = await Promise.all(
       commSnap.docs.map(async commDoc => {
         const communityData = commDoc.data();
@@ -90,7 +103,7 @@ app.get('/api/communities', async (req, res) => {
     );
     res.json(communities);
   } catch (e) {
-    console.error(e);
+    console.error('Error fetching communities:', e);
     res.status(500).json({ error: 'Failed to fetch communities' });
   }
 });
@@ -106,7 +119,7 @@ app.post('/api/communities', async (req, res) => {
     await db.collection('communities').doc(id).set({ name, description: description || '', lastActivity });
 
     // Add each member as a sub‑document under the community
-    const memberPromises = (memberAddresses || []).map(async address => {
+    const memberPromises = (memberAddresses || []).map(async (address: string) => {
       const userDoc = await db.collection('users').doc(address).get();
       const userData = userDoc.exists ? userDoc.data() : {};
       const memberData = {
@@ -134,4 +147,5 @@ app.post('/api/communities', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
+  console.log(`Using Firebase project: smartsplit-4728d`);
 });

@@ -59,6 +59,15 @@ export function useSplitTransaction() {
     setResult(null);
 
     try {
+      // Validate recipient addresses
+      for (const share of shares) {
+        const addr = share.member.walletAddress?.trim();
+        if (!addr || !addr.startsWith('0x') || addr.length < 10) {
+          setError(`Invalid Sui wallet address for recipient ${share.member.name}`);
+          return null;
+        }
+      }
+
       // Build atomic PTB: split off individual amounts directly from gas coin
       const tx = new Transaction();
 
@@ -70,9 +79,10 @@ export function useSplitTransaction() {
 
       // Atomically transfer each allocated coin to its designated recipient
       for (let i = 0; i < shares.length; i++) {
+        const targetAddress = shares[i].member.walletAddress.trim();
         tx.transferObjects(
           [splitCoins[i]],
-          tx.pure.address(shares[i].member.walletAddress)
+          tx.pure.address(targetAddress)
         );
       }
 
@@ -82,10 +92,10 @@ export function useSplitTransaction() {
           () =>
             reject(
               new Error(
-                'Wallet request timed out. Please unlock your wallet or check the popup.'
+                'Wallet request timed out. Please check your wallet extension popup.'
               )
             ),
-          60_000
+          75_000
         );
       });
 
@@ -133,27 +143,29 @@ export function useSplitTransaction() {
       setResult(splitResult);
       return splitResult;
     } catch (err: any) {
+      console.error('[SmartSplit] Transaction execution error:', err);
       let rawMsg = err instanceof Error ? err.message : String(err);
+
       if (
-        rawMsg.includes('Rejected') ||
-        rawMsg.includes('rejected') ||
-        rawMsg.includes('denied') ||
-        rawMsg.includes('User rejected')
+        /user rejected/i.test(rawMsg) ||
+        /rejected/i.test(rawMsg) ||
+        /denied/i.test(rawMsg) ||
+        /cancelled/i.test(rawMsg)
       ) {
         rawMsg = 'Transaction cancelled in wallet.';
       } else if (
-        rawMsg.includes('password') ||
-        rawMsg.includes('locked') ||
-        rawMsg.includes('lock')
+        /insufficient/i.test(rawMsg) ||
+        /gas balance/i.test(rawMsg) ||
+        /cannot find gas coin/i.test(rawMsg)
       ) {
-        rawMsg =
-          'Wallet locked or incorrect password. Please unlock your wallet and try again.';
+        rawMsg = 'Insufficient SUI balance for this payment and gas fee. Please request Testnet SUI from faucet.';
       } else if (
-        rawMsg.includes('Insufficient') ||
-        rawMsg.includes('insufficient')
+        /wallet is locked/i.test(rawMsg) ||
+        /wallet locked/i.test(rawMsg)
       ) {
-        rawMsg = 'Insufficient SUI balance for this split and gas fees.';
+        rawMsg = 'Wallet is locked. Please unlock your wallet extension and try again.';
       }
+
       setError(rawMsg);
       return null;
     } finally {

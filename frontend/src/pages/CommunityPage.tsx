@@ -66,6 +66,7 @@ export function CommunityPage() {
   const queryClient = useQueryClient();
   const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [attemptedCreate, setAttemptedCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [selectedAddresses, setSelectedAddresses] = useState<string[]>([]);
@@ -145,7 +146,7 @@ export function CommunityPage() {
           <button
             className="btn btn-primary w-full"
             style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-            onClick={() => navigate('/split')}
+            onClick={() => navigate('/split', { state: { preselectedCommunity: selectedCommunity } })}
           >
             <SplitIcon size={17} color="#fff" strokeWidth={2} />
             Split with this community
@@ -274,22 +275,27 @@ export function CommunityPage() {
           >
             <motion.div
               className="modal-sheet"
-              initial={{ y: 80, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 80, opacity: 0 }}
-              transition={{ type: 'spring', bounce: 0.28 }}
+              initial={{ scale: 0.92, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0, y: 10 }}
+              transition={{ type: 'spring', bounce: 0.22 }}
             >
               <div className="modal-handle" />
 
-              <div className="flex items-center gap-10 mb-20">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 22 }}>
                 <div style={{
-                  width: 36, height: 36, borderRadius: 12,
+                  width: 42, height: 42, borderRadius: 14,
                   background: 'linear-gradient(135deg, var(--purple), var(--deep))',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: '0 4px 14px rgba(159,157,243,0.35)',
+                  flexShrink: 0,
                 }}>
-                  <GroupIcon size={18} color="#fff" strokeWidth={1.8} />
+                  <GroupIcon size={20} color="#fff" strokeWidth={1.8} />
                 </div>
-                <h3>Create Community</h3>
+                <div>
+                  <h3 style={{ fontSize: '1.2rem', lineHeight: 1.2, margin: 0 }}>Create Community</h3>
+                  <p className="color-text3 text-xs" style={{ marginTop: 4 }}>Group members for instant split payments</p>
+                </div>
               </div>
 
               <div className="form-group mb-12">
@@ -301,6 +307,11 @@ export function CommunityPage() {
                   onChange={(e) => setNewName(e.target.value)}
                   autoFocus
                 />
+                {attemptedCreate && !newName.trim() && (
+                  <p className="text-xs" style={{ color: '#c0392b', marginTop: 4, fontWeight: 500 }}>
+                    * Please enter a community name
+                  </p>
+                )}
               </div>
 
               <div className="form-group mb-20">
@@ -314,6 +325,11 @@ export function CommunityPage() {
               </div>
 
               <p className="section-title" style={{ marginBottom: 10 }}>ADD MEMBERS (from registered users)</p>
+              {attemptedCreate && selectedAddresses.length === 0 && (
+                <p className="text-xs" style={{ color: '#c0392b', marginBottom: 10, fontWeight: 500 }}>
+                  * Please select at least 1 member for this community
+                </p>
+              )}
               <div style={{ marginBottom: 20, maxHeight: 260, overflowY: 'auto' }}>
                 {allUsers.length === 0 && (
                   <p className="text-sm color-text3" style={{ textAlign: 'center', padding: '20px 0' }}>
@@ -331,10 +347,14 @@ export function CommunityPage() {
                         background: sel ? 'rgba(159,157,243,0.12)' : undefined,
                         borderColor: sel ? 'var(--purple)' : undefined,
                         cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 14,
+                        padding: '12px 14px',
                       }}
                     >
-                      <Avatar member={apiUserToMember(u)} size="sm" />
-                      <div className="list-row-content">
+                      <Avatar member={apiUserToMember(u)} size="sm" style={{ flexShrink: 0 }} />
+                      <div className="list-row-content" style={{ flex: 1, minWidth: 0 }}>
                         <div className="list-row-title" style={{ fontSize: '0.9rem' }}>
                           {u.nickname || 'Anonymous'}
                         </div>
@@ -343,10 +363,11 @@ export function CommunityPage() {
                         </div>
                       </div>
                       <div style={{
-                        width: 24, height: 24, borderRadius: '50%',
+                        width: 26, height: 26, borderRadius: '50%',
                         background: sel ? 'var(--purple)' : 'var(--border)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         transition: 'background 200ms',
+                        flexShrink: 0,
                       }}>
                         {sel
                           ? <CheckIcon size={12} color="#fff" strokeWidth={2.5} />
@@ -364,13 +385,24 @@ export function CommunityPage() {
               )}
 
               <div className="flex gap-12">
-                <button className="btn btn-ghost flex-1" onClick={() => setShowCreateModal(false)}>
+                <button
+                  className="btn btn-ghost flex-1"
+                  onClick={() => {
+                    setShowCreateModal(false);
+                    setAttemptedCreate(false);
+                  }}
+                >
                   Cancel
                 </button>
                 <button
                   className="btn btn-primary flex-1"
-                  disabled={!newName.trim() || createMutation.isPending}
-                  onClick={() => createMutation.mutate()}
+                  disabled={createMutation.isPending}
+                  onClick={() => {
+                    setAttemptedCreate(true);
+                    if (newName.trim() && selectedAddresses.length > 0) {
+                      createMutation.mutate();
+                    }
+                  }}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                 >
                   <PlusIcon size={15} color="#fff" strokeWidth={2.2} />

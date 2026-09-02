@@ -358,23 +358,23 @@ p  { font-size: 0.95rem; color: var(--text-2); line-height: 1.6; }
 /* ─── FAB ────────────────────────────────────────────────────────── */
 .fab {
   position: fixed;
-  bottom: 32px;
+  bottom: 88px;
   right: 24px;
-  width: 60px; height: 60px;
+  width: 58px; height: 58px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--purple), var(--deep));
   color: #fff;
   font-size: 1.6rem;
   border: none;
   cursor: pointer;
-  box-shadow: 0 6px 24px rgba(99,83,172,0.45);
+  box-shadow: 0 8px 28px rgba(99,83,172,0.45);
   display: flex; align-items: center; justify-content: center;
   transition: transform var(--dur) var(--ease-spring), box-shadow var(--dur);
-  z-index: 50;
+  z-index: 150;
 }
 .fab:hover {
-  transform: scale(1.1) rotate(45deg);
-  box-shadow: 0 8px 32px rgba(99,83,172,0.55);
+  transform: scale(1.08) rotate(45deg);
+  box-shadow: 0 10px 36px rgba(99,83,172,0.55);
 }
 
 /* ─── Bottom Nav ─────────────────────────────────────────────────── */
@@ -408,35 +408,38 @@ p  { font-size: 0.95rem; color: var(--text-2); line-height: 1.6; }
 /* ─── Modal / Sheet ──────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed; inset: 0; z-index: 200;
-  background: rgba(45,42,94,0.25);
-  display: flex; align-items: flex-end; justify-content: center;
+  background: rgba(45,42,94,0.38);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px 16px;
   will-change: opacity;
 }
 .modal-overlay.centered { align-items: center; }
 .modal-sheet {
   width: 100%; max-width: 480px;
   background: var(--surface);
-  border-radius: 28px 28px 0 0;
-  padding: 16px 24px 40px;
+  border-radius: 28px;
+  padding: 24px 24px 28px;
   will-change: transform, opacity;
-  box-shadow: 0 -8px 40px rgba(99,83,172,0.20);
-  max-height: 85vh;
+  box-shadow: 0 20px 60px rgba(45,42,94,0.25);
+  max-height: calc(100vh - 80px);
   overflow-y: auto;
 }
 .modal-card {
   width: calc(100% - 48px);
-  max-width: 360px;
+  max-width: 380px;
   background: var(--surface);
   border-radius: 28px;
-  padding: 28px 24px 20px;
-  box-shadow: 0 24px 64px rgba(45,42,94,0.18);
+  padding: 28px 24px 24px;
+  box-shadow: 0 24px 64px rgba(45,42,94,0.22);
   will-change: transform, opacity;
 }
 .modal-handle {
   width: 40px; height: 4px;
   background: var(--border);
   border-radius: var(--r-full);
-  margin: 0 auto 20px;
+  margin: 0 auto 16px;
 }
 
 /* ─── Section titles ─────────────────────────────────────────────── */
@@ -636,7 +639,9 @@ p  { font-size: 0.95rem; color: var(--text-2); line-height: 1.6; }
 .mt-32 { margin-top: 32px; }
 .mb-8  { margin-bottom: 8px;  }
 .mb-12 { margin-bottom: 12px; }
+.mb-14 { margin-bottom: 14px; }
 .mb-16 { margin-bottom: 16px; }
+.mb-18 { margin-bottom: 18px; }
 .mb-20 { margin-bottom: 20px; }
 .mb-24 { margin-bottom: 24px; }
 .w-full { width: 100%; }
@@ -653,8 +658,8 @@ p  { font-size: 0.95rem; color: var(--text-2); line-height: 1.6; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ─── Form group ─────────────────────────────────────────────────── */
-.form-group { display: flex; flex-direction: column; gap: 6px; }
-.form-label { font-size: 0.82rem; font-weight: 600; color: var(--text-2); }
+.form-group { display: flex; flex-direction: column; gap: 8px; }
+.form-label { font-size: 0.84rem; font-weight: 600; color: var(--text-2); letter-spacing: 0.01em; }
 
 /* ─── Spinner ────────────────────────────────────────────────────── */
 .spinner {

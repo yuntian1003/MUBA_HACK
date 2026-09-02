@@ -37,6 +37,7 @@ export function ProfilePage() {
   const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState('');
   const [editing, setEditing] = useState(false);
+  const [attemptedSaveName, setAttemptedSaveName] = useState(false);
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
   const [copied, setCopied] = useState(false);
   const [saveMsg, setSaveMsg] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -48,6 +49,8 @@ export function ProfilePage() {
   }, [account]);
 
   async function handleSave() {
+    setAttemptedSaveName(true);
+    if (!displayName.trim()) return;
     if (!account) { setEditing(false); return; }
     setSaveMsg('saving');
     try {
@@ -185,17 +188,29 @@ export function ProfilePage() {
 
             {/* Display name */}
             {editing ? (
-              <div className="flex gap-8 w-full" style={{ maxWidth: 280 }}>
-                <input
-                  className="input"
-                  placeholder="Display name"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  style={{ flex: 1 }}
-                />
-                <button className="btn btn-primary btn-sm" onClick={handleSave}>
-                  {saveMsg === 'saving' ? 'Saving…' : 'Save'}
-                </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: '100%', maxWidth: 280 }}>
+                <div className="flex gap-8 w-full">
+                  <input
+                    className="input"
+                    placeholder="Display name"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    style={{ flex: 1 }}
+                    autoFocus
+                  />
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={saveMsg === 'saving'}
+                    onClick={handleSave}
+                  >
+                    {saveMsg === 'saving' ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+                {attemptedSaveName && !displayName.trim() && (
+                  <p className="text-xs" style={{ color: '#c0392b', margin: '2px 0 0 2px', fontWeight: 500 }}>
+                    * Display name cannot be empty
+                  </p>
+                )}
               </div>
             ) : (
               <div style={{ textAlign: 'center' }}>

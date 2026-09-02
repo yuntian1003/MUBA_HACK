@@ -1,17 +1,20 @@
 // src/pages/SplitPage.tsx
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useCurrentAccount } from '@mysten/dapp-kit-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Avatar } from '../components/Avatar';
 import {
   SplitIcon, CommunityIcon, WalletIcon, PayIcon, ReceiveIcon,
   CheckCircleIcon, AlertCircleIcon, BoltIcon, BackIcon,
-  ChevronRightIcon, CheckIcon, LinkIcon,
+  ChevronRightIcon, CheckIcon, LinkIcon, LockIcon,
 } from '../components/Icons';
 import { useSplitTransaction } from '../hooks/useSplitTransaction';
 import { DEMO_MEMBERS, DEMO_COMMUNITIES } from '../constants';
+import { fetchUsers } from '../api';
+import { apiUserToMember } from '../types';
 import type { Member } from '../types';
 
 type Step = 1 | 2 | 3 | 4;
@@ -48,39 +51,142 @@ function StepBar({ current }: { current: Step }) {
 export function SplitPage() {
   const account = useCurrentAccount();
   const navigate = useNavigate();
+  const location = useLocation();
+  const locationState = location.state as {
+    preselectedMember?: Member;
+    direction?: 'pay' | 'receive';
+    preselectedCommunity?: any;
+  } | undefined;
+
   const { execute, isLoading, error: txError, result, reset } = useSplitTransaction();
 
   const [step, setStep] = useState<Step>(1);
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<Member[]>([]);
+
+  // ── Fetch users from backend ──────────────────────────────────
+  const { data: rawUsers = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => fetchUsers(),
+    staleTime: 20_000,
+  });
+
+  const allMembers = useMemo(() => {
+    const backendMembers: Member[] = rawUsers.map(apiUserToMember);
+    const map = new Map<string, Member>();
+
+    if (locationState?.preselectedMember) {
+      map.set(locationState.preselectedMember.id, locationState.preselectedMember);
+    }
+    backendMembers.forEach((m) => map.set(m.id, m));
+    DEMO_MEMBERS.forEach((m) => {
+      if (!map.has(m.id)) map.set(m.id, m);
+    });
+
+    return Array.from(map.values());
+  }, [rawUsers, locationState]);
+
+  // Preselect friend if navigated from Friends page
+  const [selected, setSelected] = useState<Member[]>(() => {
+    if (locationState?.preselectedMember) {
+      return [locationState.preselectedMember];
+    }
+    if (locationState?.preselectedCommunity?.members) {
+      return locationState.preselectedCommunity.members;
+    }
+    return [];
+  });
+
+  const [direction, setDirection] = useState<'pay' | 'receive'>(() => {
+    return locationState?.direction || 'pay';
+  });
+
+  useEffect(() => {
+    if (locationState?.preselectedMember) {
+      setSelected([locationState.preselectedMember]);
+      if (locationState.direction) setDirection(locationState.direction);
+    } else if (locationState?.preselectedCommunity?.members) {
+      setSelected(locationState.preselectedCommunity.members);
+    }
+  }, [locationState]);
+
+  const lockedMemberId = locationState?.preselectedMember?.id;
+  const lockedCommunityId = locationState?.preselectedCommunity?.id;
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [attemptedStep1, setAttemptedStep1] = useState(false);
+  const [attemptedStep2, setAttemptedStep2] = useState(false);
+
+  const [selectedCommunityIds, setSelectedCommunityIds] = useState<string[]>(() => {
+    if (locationState?.preselectedCommunity?.id) {
+      return [locationState.preselectedCommunity.id];
+    }
+    return [];
+  });
+
   const [purpose, setPurpose] = useState('');
   const [totalAmount, setTotalAmount] = useState('');
-  const [direction, setDirection] = useState<'pay' | 'receive'>('pay');
-  const [selectedCommunity, setSelectedCommunity] = useState('');
   const [splitMode, setSplitMode] = useState<'equal' | 'uneven'>('equal');
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
-    if (!q) return DEMO_MEMBERS;
-    return DEMO_MEMBERS.filter(
-      (m) => m.name.toLowerCase().includes(q) || (m.phone ?? '').includes(q),
+    if (!q) return allMembers;
+    return allMembers.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        (m.email ?? '').toLowerCase().includes(q) ||
+        (m.phone ?? '').includes(q),
     );
-  }, [search]);
+  }, [search, allMembers]);
 
   const isSelected = (m: Member) => selected.some((s) => s.id === m.id);
 
   function toggleMember(m: Member) {
+    if (m.id === lockedMemberId) return;
+    if (lockedCommunityId) {
+      const lockedComm = DEMO_COMMUNITIES.find((c) => c.id === lockedCommunityId);
+      if (lockedComm?.members.some((cm) => cm.id === m.id)) return;
+    }
     if (isSelected(m)) setSelected((prev) => prev.filter((s) => s.id !== m.id));
     else setSelected((prev) => [...prev, m]);
   }
 
-  function addCommunity(id: string) {
+  function isCommunitySelected(id: string) {
+    return selectedCommunityIds.includes(id);
+  }
+
+  function toggleCommunity(id: string) {
+    if (id === lockedCommunityId) return; // Cannot cancel locked source community
     const community = DEMO_COMMUNITIES.find((c) => c.id === id);
     if (!community) return;
-    const toAdd = community.members.filter((m) => !isSelected(m));
-    setSelected((prev) => [...prev, ...toAdd]);
-    setSelectedCommunity(id);
+
+    if (selectedCommunityIds.includes(id)) {
+      // Toggle OFF: Remove only this community ID
+      const nextCommunityIds = selectedCommunityIds.filter((cid) => cid !== id);
+      setSelectedCommunityIds(nextCommunityIds);
+
+      // Keep members that belong to other active communities or individually selected
+      const remainingCommunityMemberIds = new Set<string>();
+      if (lockedMemberId) remainingCommunityMemberIds.add(lockedMemberId);
+      if (lockedCommunityId) {
+        DEMO_COMMUNITIES.find((c) => c.id === lockedCommunityId)?.members.forEach((m) =>
+          remainingCommunityMemberIds.add(m.id)
+        );
+      }
+      nextCommunityIds.forEach((cid) => {
+        const comm = DEMO_COMMUNITIES.find((c) => c.id === cid);
+        comm?.members.forEach((m) => remainingCommunityMemberIds.add(m.id));
+      });
+
+      const thisCommunityMemberIds = new Set(community.members.map((m) => m.id));
+      setSelected((prev) =>
+        prev.filter((m) => !thisCommunityMemberIds.has(m.id) || remainingCommunityMemberIds.has(m.id))
+      );
+    } else {
+      // Toggle ON: Add only this community ID and its members
+      setSelectedCommunityIds((prev) => [...prev, id]);
+      const toAdd = community.members.filter((m) => !isSelected(m));
+      setSelected((prev) => [...prev, ...toAdd]);
+    }
   }
 
   const perPerson = useMemo(() => {
@@ -138,6 +244,7 @@ export function SplitPage() {
     reset();
     setStep(1);
     setSelected([]);
+    setSelectedCommunityIds([]);
     setPurpose('');
     setTotalAmount('');
     setDirection('pay');
@@ -181,32 +288,38 @@ export function SplitPage() {
           >
             <p className="section-title" style={{ marginBottom: 8 }}>QUICK ADD FROM COMMUNITY</p>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
-              {DEMO_COMMUNITIES.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => addCommunity(c.id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '7px 14px',
-                    border: `1.5px solid ${selectedCommunity === c.id ? 'var(--purple)' : 'var(--border)'}`,
-                    borderRadius: 'var(--r-full)',
-                    background: selectedCommunity === c.id ? 'var(--purple)' : 'var(--surface-2)',
-                    color: selectedCommunity === c.id ? '#fff' : 'var(--text-2)',
-                    fontFamily: 'Outfit, sans-serif',
-                    fontWeight: 600,
-                    fontSize: '0.87rem',
-                    cursor: 'pointer',
-                    transition: 'all 200ms',
-                  }}
-                >
-                  <CommunityIcon
-                    size={14}
-                    color={selectedCommunity === c.id ? '#fff' : 'var(--text-3)'}
-                    strokeWidth={2}
-                  />
-                  {c.name}
-                </button>
-              ))}
+              {DEMO_COMMUNITIES.map((c) => {
+                const active = isCommunitySelected(c.id);
+                const isLocked = c.id === lockedCommunityId;
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => toggleCommunity(c.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      padding: '7px 14px',
+                      border: `1.5px solid ${active ? 'var(--purple)' : 'var(--border)'}`,
+                      borderRadius: 'var(--r-full)',
+                      background: active ? 'var(--purple)' : 'var(--surface-2)',
+                      color: active ? '#fff' : 'var(--text-2)',
+                      fontFamily: 'Outfit, sans-serif',
+                      fontWeight: 600,
+                      fontSize: '0.87rem',
+                      cursor: isLocked ? 'default' : 'pointer',
+                      opacity: isLocked ? 0.9 : 1,
+                      transition: 'all 200ms',
+                    }}
+                  >
+                    <CommunityIcon
+                      size={14}
+                      color={active ? '#fff' : 'var(--text-3)'}
+                      strokeWidth={2}
+                    />
+                    {c.name}
+                    {isLocked && <LockIcon size={12} color="currentColor" strokeWidth={2.4} />}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="form-group" style={{ marginBottom: 16 }}>
@@ -220,68 +333,151 @@ export function SplitPage() {
             </div>
 
             <div style={{ marginBottom: 16 }}>
-              {filtered.map((m) => (
-                <motion.div
-                  key={m.id}
-                  layout
-                  className="list-row"
-                  onClick={() => toggleMember(m)}
-                  style={{
-                    background: isSelected(m) ? 'rgba(159,157,243,0.12)' : undefined,
-                    borderColor: isSelected(m) ? 'var(--purple)' : undefined,
-                  }}
-                >
-                  <Avatar member={m} />
-                  <div className="list-row-content">
-                    <div className="list-row-title">{m.name}</div>
-                    <div className="list-row-sub">{m.phone ?? m.walletAddress.slice(0, 16) + '…'}</div>
-                  </div>
-                  <div style={{
-                    width: 26, height: 26, borderRadius: '50%',
-                    background: isSelected(m) ? 'var(--purple)' : 'var(--border)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'background 200ms', flexShrink: 0,
-                  }}>
-                    {isSelected(m)
-                      ? <CheckIcon size={13} color="#fff" strokeWidth={2.5} />
-                      : <span style={{ color: 'var(--text-3)', fontSize: '1rem', lineHeight: 1 }}>+</span>
-                    }
-                  </div>
-                </motion.div>
-              ))}
+              {filtered.map((m) => {
+                const isLocked =
+                  m.id === lockedMemberId ||
+                  (lockedCommunityId &&
+                    DEMO_COMMUNITIES.find((c) => c.id === lockedCommunityId)?.members.some((cm) => cm.id === m.id));
+
+                return (
+                  <motion.div
+                    key={m.id}
+                    layout
+                    className="list-row"
+                    onClick={() => toggleMember(m)}
+                    style={{
+                      background: isSelected(m) ? 'rgba(159,157,243,0.12)' : undefined,
+                      borderColor: isSelected(m) ? 'var(--purple)' : undefined,
+                      cursor: isLocked ? 'default' : 'pointer',
+                    }}
+                  >
+                    <Avatar member={m} />
+                    <div className="list-row-content">
+                      <div className="list-row-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {m.name}
+                        {isLocked && (
+                          <span style={{
+                            fontSize: '0.68rem',
+                            background: 'rgba(159,157,243,0.22)',
+                            color: 'var(--deep)',
+                            padding: '2px 7px',
+                            borderRadius: 6,
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3,
+                          }}>
+                            <LockIcon size={10} color="var(--deep)" strokeWidth={2.4} />
+                            Primary
+                          </span>
+                        )}
+                      </div>
+                      <div className="list-row-sub">{m.email || m.phone || 'SmartSplit Contact'}</div>
+                    </div>
+                    <div style={{
+                      width: 26, height: 26, borderRadius: '50%',
+                      background: isSelected(m) ? 'var(--purple)' : 'var(--border)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      transition: 'background 200ms', flexShrink: 0,
+                    }}>
+                      {isSelected(m)
+                        ? <CheckIcon size={13} color="#fff" strokeWidth={2.5} />
+                        : <span style={{ color: 'var(--text-3)', fontSize: '1rem', lineHeight: 1 }}>+</span>
+                      }
+                    </div>
+                  </motion.div>
+                );
+              })}
             </div>
 
             {selected.length > 0 && (
               <div style={{ marginBottom: 20 }}>
                 <p className="section-title" style={{ marginBottom: 8 }}>SELECTED ({selected.length})</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {selected.map((m) => (
-                    <span key={m.id} className="chip">
-                      <Avatar member={m} size="sm" style={{ width: 22, height: 22, fontSize: '0.65rem' }} />
-                      {m.name.split(' ')[0]}
-                      <button
-                        className="chip-close"
-                        onClick={() => toggleMember(m)}
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      >
-                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                          <path d="M7 1L1 7M1 1l6 6" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-                        </svg>
-                      </button>
-                    </span>
-                  ))}
+                  {selected.map((m) => {
+                    const isLocked =
+                      m.id === lockedMemberId ||
+                      (lockedCommunityId &&
+                        DEMO_COMMUNITIES.find((c) => c.id === lockedCommunityId)?.members.some((cm) => cm.id === m.id));
+
+                    return (
+                      <span key={m.id} className="chip">
+                        <Avatar member={m} size="sm" style={{ width: 22, height: 22, fontSize: '0.65rem' }} />
+                        {m.name.split(' ')[0]}
+                        {isLocked ? (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              marginLeft: 4,
+                              background: 'rgba(159, 157, 243, 0.25)',
+                              borderRadius: '50%',
+                              width: 18,
+                              height: 18,
+                            }}
+                            title="Primary recipient (Locked)"
+                          >
+                            <LockIcon size={10} color="var(--deep)" strokeWidth={2.4} />
+                          </span>
+                        ) : (
+                          <button
+                            className="chip-close"
+                            onClick={() => toggleMember(m)}
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                          >
+                            <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                              <path d="M7 1L1 7M1 1l6 6" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+                            </svg>
+                          </button>
+                        )}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
+            {attemptedStep1 && selected.length === 0 && (
+              <p className="text-xs" style={{ color: '#c0392b', marginBottom: 10, textAlign: 'center', fontWeight: 600 }}>
+                * Please select at least 1 recipient to proceed
+              </p>
+            )}
+
             <button
               className="btn btn-primary w-full"
-              disabled={selected.length === 0}
-              onClick={() => setStep(2)}
+              onClick={() => {
+                setAttemptedStep1(true);
+                if (selected.length > 0) {
+                  setStep(2);
+                }
+              }}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
             >
               Next: Enter Details
               <ChevronRightIcon size={16} color="#fff" strokeWidth={2.2} />
+            </button>
+
+            <button
+              type="button"
+              className="btn btn-ghost w-full"
+              onClick={() => setShowCancelModal(true)}
+              style={{
+                marginTop: 10,
+                color: '#c0392b',
+                background: 'rgba(255, 155, 179, 0.18)',
+                border: '1.5px solid rgba(192, 57, 43, 0.3)',
+                fontWeight: 700,
+                fontSize: '0.88rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                borderRadius: 14,
+                padding: '12px',
+              }}
+            >
+              Cancel Transaction
             </button>
           </motion.div>
         )}
@@ -297,13 +493,18 @@ export function SplitPage() {
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div className="form-group">
-                <label className="form-label">Purpose / Description</label>
+                <label className="form-label">Purpose / Description *</label>
                 <input
                   className="input"
                   placeholder="e.g. Dinner at XYZ Restaurant"
                   value={purpose}
                   onChange={(e) => setPurpose(e.target.value)}
                 />
+                {attemptedStep2 && !purpose.trim() && (
+                  <p className="text-xs" style={{ color: '#c0392b', marginTop: 4, fontWeight: 500 }}>
+                    * Please enter a purpose / description
+                  </p>
+                )}
               </div>
 
               {/* Split Mode Selector */}
@@ -339,7 +540,7 @@ export function SplitPage() {
               {splitMode === 'equal' ? (
                 <>
                   <div className="form-group">
-                    <label className="form-label">Total Bill Amount (SUI)</label>
+                    <label className="form-label">Total Bill Amount (SUI) *</label>
                     <input
                       className="input"
                       type="number"
@@ -350,6 +551,11 @@ export function SplitPage() {
                       onChange={(e) => setTotalAmount(e.target.value)}
                       style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--deep)' }}
                     />
+                    {attemptedStep2 && (!totalAmount || parseFloat(totalAmount) <= 0) && (
+                      <p className="text-xs" style={{ color: '#c0392b', marginTop: 4, fontWeight: 500 }}>
+                        * Please enter a valid total amount in SUI (&gt; 0)
+                      </p>
+                    )}
                   </div>
 
                   {selected.length > 0 && parseFloat(totalAmount) > 0 && (
@@ -390,35 +596,42 @@ export function SplitPage() {
                       <div
                         key={m.id}
                         className="clay-card flat"
-                        style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}
+                        style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}
                       >
-                        <Avatar member={m} size="sm" />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className="font-semibold text-sm truncate">{m.name}</div>
-                          <div className="text-xs color-text3 truncate">{m.walletAddress.slice(0, 10)}…</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <Avatar member={m} size="sm" />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="font-semibold text-sm truncate">{m.name}</div>
+                            <div className="text-xs color-text3 truncate">{m.email || m.phone || 'Contact'}</div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input
+                              className="input"
+                              type="number"
+                              placeholder="0.00"
+                              min="0"
+                              step="0.01"
+                              value={customAmounts[m.id] ?? ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setCustomAmounts((prev) => ({ ...prev, [m.id]: val }));
+                              }}
+                              style={{
+                                width: 100,
+                                padding: '8px 10px',
+                                textAlign: 'right',
+                                fontWeight: 700,
+                                fontSize: '0.95rem',
+                              }}
+                            />
+                            <span className="text-xs font-semibold color-text3">SUI</span>
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <input
-                            className="input"
-                            type="number"
-                            placeholder="0.00"
-                            min="0"
-                            step="0.01"
-                            value={customAmounts[m.id] ?? ''}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setCustomAmounts((prev) => ({ ...prev, [m.id]: val }));
-                            }}
-                            style={{
-                              width: 100,
-                              padding: '8px 10px',
-                              textAlign: 'right',
-                              fontWeight: 700,
-                              fontSize: '0.95rem',
-                            }}
-                          />
-                          <span className="text-xs font-semibold color-text3">SUI</span>
-                        </div>
+                        {attemptedStep2 && (!customAmounts[m.id] || parseFloat(customAmounts[m.id]) <= 0) && (
+                          <p className="text-xs" style={{ color: '#c0392b', margin: 0, textAlign: 'right', fontWeight: 500 }}>
+                            * Please enter a valid amount for {m.name}
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -466,14 +679,40 @@ export function SplitPage() {
               </button>
               <button
                 className="btn btn-primary flex-1"
-                disabled={!validationOk}
-                onClick={() => setStep(3)}
+                onClick={() => {
+                  setAttemptedStep2(true);
+                  if (validationOk) {
+                    setStep(3);
+                  }
+                }}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 Review
                 <ChevronRightIcon size={15} color="#fff" strokeWidth={2.2} />
               </button>
             </div>
+
+            <button
+              type="button"
+              className="btn btn-ghost w-full"
+              onClick={() => setShowCancelModal(true)}
+              style={{
+                marginTop: 10,
+                color: '#c0392b',
+                background: 'rgba(255, 155, 179, 0.18)',
+                border: '1.5px solid rgba(192, 57, 43, 0.3)',
+                fontWeight: 700,
+                fontSize: '0.88rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                borderRadius: 14,
+                padding: '12px',
+              }}
+            >
+              Cancel Transaction
+            </button>
           </motion.div>
         )}
 
@@ -659,6 +898,81 @@ export function SplitPage() {
                 Home
               </button>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirm Cancel Transaction Modal */}
+      <AnimatePresence>
+        {showCancelModal && (
+          <motion.div
+            className="modal-overlay centered"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={(e) => e.target === e.currentTarget && setShowCancelModal(false)}
+          >
+            <motion.div
+              className="modal-card"
+              initial={{ scale: 0.9, opacity: 0, y: 12 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 12 }}
+              transition={{ type: 'spring', bounce: 0.2 }}
+              style={{ maxWidth: 350, textAlign: 'center', padding: '26px 22px' }}
+            >
+              <div style={{
+                width: 52, height: 52, borderRadius: '50%',
+                background: 'rgba(255, 155, 179, 0.25)',
+                border: '2px solid rgba(192, 57, 43, 0.3)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto 14px',
+              }}>
+                <AlertCircleIcon size={26} color="#c0392b" strokeWidth={2} />
+              </div>
+
+              <h3 style={{ fontSize: '1.2rem', marginBottom: 8, color: 'var(--text-1)' }}>
+                Confirm Cancel Transaction?
+              </h3>
+              <p className="color-text3 text-xs" style={{ marginBottom: 22, lineHeight: 1.45 }}>
+                Are you sure you want to cancel this transaction? Any progress will be discarded.
+              </p>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost flex-1"
+                  onClick={() => setShowCancelModal(false)}
+                  style={{
+                    fontWeight: 600,
+                    borderRadius: 12,
+                    padding: '10px 14px',
+                    fontSize: '0.88rem',
+                  }}
+                >
+                  No
+                </button>
+                <button
+                  type="button"
+                  className="btn flex-1"
+                  onClick={() => {
+                    setShowCancelModal(false);
+                    navigate(-1);
+                  }}
+                  style={{
+                    background: 'linear-gradient(135deg, #e04f6e, #c0392b)',
+                    border: 'none',
+                    color: '#fff',
+                    fontWeight: 700,
+                    borderRadius: 12,
+                    padding: '10px 14px',
+                    fontSize: '0.88rem',
+                    boxShadow: '0 4px 14px rgba(192, 57, 43, 0.35)',
+                  }}
+                >
+                  Yes
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

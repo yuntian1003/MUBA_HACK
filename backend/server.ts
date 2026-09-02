@@ -52,13 +52,25 @@ app.get('/api/users/:address', async (req, res) => {
 // Create or update a user profile (merge = true)
 app.post('/api/users', async (req, res) => {
   try {
-    const { address, nickname, avatarColor } = req.body;
-    if (!address) return res.status(400).json({ error: 'Address required' });
+    let { address, nickname, avatarColor, email } = req.body;
+    if (!address && !email) return res.status(400).json({ error: 'Address or email required' });
+
+    // If only email is provided or address is empty, generate a valid deterministic mock address based on email
+    if (!address && email) {
+      const hash = Buffer.from(email).toString('hex').padEnd(64, '0').slice(0, 64);
+      address = '0x' + hash;
+    }
+
     await db.collection('users').doc(address).set(
-      { address, nickname, avatarColor: avatarColor || '#9F9DF3' },
+      {
+        address,
+        nickname: nickname || (email ? email.split('@')[0] : 'Friend'),
+        avatarColor: avatarColor || '#9F9DF3',
+        email: email || '',
+      },
       { merge: true }
     );
-    res.json({ success: true });
+    res.json({ success: true, address, nickname, email });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to upsert user' });
@@ -70,11 +82,12 @@ app.get('/api/users', async (req, res) => {
   try {
     const q = (req.query.q as string || '').toLowerCase();
     const snapshot = await db.collection('users').get();
-    let users = snapshot.docs.map(d => ({ ...d.data(), address: d.id }));
+    let users: any[] = snapshot.docs.map(d => ({ ...d.data(), address: d.id }));
     if (q) {
-      users = users.filter(u =>
+      users = users.filter((u: any) =>
         (u.nickname && u.nickname.toLowerCase().includes(q)) ||
-        (u.address && u.address.toLowerCase().includes(q))
+        (u.address && u.address.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q))
       );
     }
     res.json(users);

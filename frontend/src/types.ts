@@ -5,6 +5,7 @@ export interface ApiUser {
   address: string;
   nickname: string | null;
   avatarColor: string;
+  email?: string;
 }
 
 export interface ApiCommunity {
@@ -29,6 +30,7 @@ export interface Member {
   name: string;
   walletAddress: string;
   avatarColor: string;
+  email?: string;
   phone?: string;
 }
 
@@ -36,9 +38,10 @@ export interface Member {
 export function apiUserToMember(u: ApiUser): Member {
   return {
     id: u.address,
-    name: u.nickname || u.address.slice(0, 8) + '…',
+    name: u.nickname || (u.email ? u.email.split('@')[0] : u.address.slice(0, 8) + '…'),
     walletAddress: u.address,
     avatarColor: u.avatarColor || '#9F9DF3',
+    email: u.email,
   };
 }
 

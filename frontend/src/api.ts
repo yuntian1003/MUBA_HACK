@@ -16,11 +16,11 @@ export async function fetchUser(address: string): Promise<any | null> {
   return res.json();
 }
 
-export async function upsertUser(address: string, nickname: string, avatarColor: string): Promise<void> {
+export async function upsertUser(address: string, nickname: string, avatarColor: string, email?: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/users`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address, nickname, avatarColor }),
+    body: JSON.stringify({ address, nickname, avatarColor, email }),
   });
   if (!res.ok) throw new Error('Failed to save user');
 }

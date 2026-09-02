@@ -333,3 +333,23 @@ export function ExploreIcon(p: IconProps) {
     </>,
   );
 }
+
+export function EmailIcon(p: IconProps) {
+  return svg(p,
+    <>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="M22 7l-8.97 5.7a1.94 1.94 0 01-2.06 0L2 7" />
+    </>,
+  );
+}
+
+export function UserPlusIcon(p: IconProps) {
+  return svg(p,
+    <>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <line x1="19" y1="8" x2="19" y2="14" />
+      <line x1="22" y1="11" x2="16" y2="11" />
+    </>,
+  );
+}

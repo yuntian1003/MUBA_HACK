@@ -12,6 +12,7 @@ import {
   ChevronRightIcon, CheckIcon, LinkIcon, LockIcon,
 } from '../components/Icons';
 import { useSplitTransaction } from '../hooks/useSplitTransaction';
+import { useSuiNSAddress } from '../hooks/useSuiNS';
 import { DEMO_MEMBERS, DEMO_COMMUNITIES } from '../constants';
 import { fetchUsers, createPaymentRequests } from '../api';
 import { apiUserToMember } from '../types';
@@ -62,6 +63,7 @@ export function SplitPage() {
 
   const [step, setStep] = useState<Step>(1);
   const [search, setSearch] = useState('');
+  const { data: suiNSAddress, isLoading: isSuiNSLoading } = useSuiNSAddress(search);
   const [isSendingRequest, setIsSendingRequest] = useState(false);
   const [requestSent, setRequestSent] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -359,14 +361,59 @@ export function SplitPage() {
             </div>
 
             <div className="form-group" style={{ marginBottom: 16 }}>
-              <label className="form-label">Search by name or phone</label>
+              <label className="form-label">Search by name, phone or SuiNS (.sui)</label>
               <input
                 className="input"
-                placeholder="e.g. Bob, +6012…"
+                placeholder="e.g. Bob, +6012, or alice.sui…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
+
+            {/* SuiNS Resolution Indicator */}
+            {search.trim().length > 0 && (
+              <div
+                className="clay-card flat mb-16"
+                style={{
+                  padding: '12px 16px',
+                  background: suiNSAddress ? 'rgba(159,157,243,0.14)' : 'rgba(255,255,255,0.6)',
+                  borderColor: suiNSAddress ? 'var(--purple)' : undefined,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--deep)' }}>
+                    🌐 SuiNS Resolution: {search.endsWith('.sui') ? search : `${search}.sui`}
+                  </div>
+                  <div className="text-xs color-text3" style={{ fontFamily: 'monospace' }}>
+                    {isSuiNSLoading
+                      ? 'Resolving .sui domain…'
+                      : suiNSAddress
+                      ? `Resolved: ${suiNSAddress.slice(0, 16)}…${suiNSAddress.slice(-6)}`
+                      : 'No active SuiNS domain found'}
+                  </div>
+                </div>
+                {suiNSAddress && (
+                  <button
+                    className="btn btn-sm btn-primary"
+                    onClick={() => {
+                      const suiNSMember: Member = {
+                        id: `suins_${search}`,
+                        name: search.endsWith('.sui') ? search : `${search}.sui`,
+                        walletAddress: suiNSAddress,
+                        avatarColor: '#9F9DF3',
+                      };
+                      toggleMember(suiNSMember);
+                    }}
+                  >
+                    + Add SuiNS
+                  </button>
+                )}
+              </div>
+            )}
 
             <div style={{ marginBottom: 16 }}>
               {filtered.map((m) => {

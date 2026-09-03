@@ -7,6 +7,7 @@ import { SplitPage } from './pages/SplitPage';
 import { CommunityPage } from './pages/CommunityPage';
 import { FriendsPage } from './pages/FriendsPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { ZkLoginCallbackPage } from './pages/ZkLoginCallbackPage';
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
           <Route path="/community" element={<CommunityPage />} />
           <Route path="/friends" element={<FriendsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/auth/callback" element={<ZkLoginCallbackPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>

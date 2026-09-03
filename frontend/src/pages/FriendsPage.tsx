@@ -13,6 +13,7 @@ import { fetchUsers, upsertUser, deleteUser } from '../api';
 import { apiUserToMember } from '../types';
 import { AVATAR_COLORS } from '../constants';
 import type { Member } from '../types';
+import { useSuiNSAddress } from '../hooks/useSuiNS';
 
 export interface FriendRequestItem {
   id: string;
@@ -119,9 +120,11 @@ export function FriendsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [attemptedAddFriend, setAttemptedAddFriend] = useState(false);
   const [friendName, setFriendName] = useState('');
-  const [addMethod, setAddMethod] = useState<'address' | 'gmail'>('gmail');
+  const [addMethod, setAddMethod] = useState<'address' | 'gmail' | 'suins'>('gmail');
   const [walletInput, setWalletInput] = useState('');
   const [gmailInput, setGmailInput] = useState('');
+  const [suinsInput, setSuinsInput] = useState('');
+  const { data: suinsResolvedAddr, isLoading: isSuinsResolving } = useSuiNSAddress(suinsInput);
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
 
   // ── Fetch all users from backend ────────────────────────────
@@ -246,7 +249,11 @@ export function FriendsPage() {
 
   const isAddValid =
     friendName.trim().length > 0 &&
-    (addMethod === 'address' ? walletInput.trim().length >= 4 : gmailInput.includes('@'));
+    (addMethod === 'address'
+      ? walletInput.trim().length >= 4
+      : addMethod === 'suins'
+      ? suinsInput.trim().length >= 3
+      : gmailInput.includes('@'));
 
   const pendingIncomingCount = incomingRequests.filter((r) => r.status === 'pending').length;
 
@@ -918,6 +925,21 @@ export function FriendsPage() {
                   <WalletIcon size={16} color={addMethod === 'address' ? 'var(--purple)' : 'var(--text-3)'} />
                   Sui Address
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setAddMethod('suins')}
+                  style={{
+                    flex: 1, padding: '9px 12px', borderRadius: 10, border: 'none',
+                    fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    background: addMethod === 'suins' ? 'var(--surface)' : 'transparent',
+                    color: addMethod === 'suins' ? 'var(--deep)' : 'var(--text-3)',
+                    boxShadow: addMethod === 'suins' ? 'var(--shadow-sm)' : 'none',
+                    transition: 'all 180ms ease',
+                  }}
+                >
+                  🌐 SuiNS (.sui)
+                </button>
               </div>
 
               {/* Name field */}
@@ -937,7 +959,7 @@ export function FriendsPage() {
                 )}
               </div>
 
-              {/* Address or Gmail field */}
+              {/* Address, Gmail or SuiNS field */}
               {addMethod === 'gmail' ? (
                 <div className="form-group" style={{ marginBottom: 22 }}>
                   <label className="form-label">Gmail / Email Address *</label>
@@ -959,6 +981,25 @@ export function FriendsPage() {
                   ) : (
                     <p className="text-xs color-text3" style={{ marginTop: 6 }}>
                       Send an instant friend request to their email
+                    </p>
+                  )}
+                </div>
+              ) : addMethod === 'suins' ? (
+                <div className="form-group" style={{ marginBottom: 22 }}>
+                  <label className="form-label">SuiNS Domain Name (.sui) *</label>
+                  <input
+                    className="input"
+                    placeholder="e.g. alice.sui"
+                    value={suinsInput}
+                    onChange={(e) => setSuinsInput(e.target.value)}
+                  />
+                  {suinsInput.trim().length > 0 && (
+                    <p className="text-xs mt-6" style={{ color: suinsResolvedAddr ? '#256328' : 'var(--text-3)', fontWeight: 600 }}>
+                      {isSuinsResolving
+                        ? 'Resolving SuiNS domain…'
+                        : suinsResolvedAddr
+                        ? `✓ Resolved Address: ${suinsResolvedAddr.slice(0, 16)}…`
+                        : 'No SuiNS domain record found'}
                     </p>
                   )}
                 </div>

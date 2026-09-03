@@ -1,10 +1,10 @@
-// src/hooks/useSplitTransaction.ts
 import { useState } from 'react';
 import { Transaction } from '@mysten/sui/transactions';
-import { useCurrentClient, useDAppKit } from '@mysten/dapp-kit-react';
+import { useCurrentAccount, useCurrentClient, useDAppKit } from '@mysten/dapp-kit-react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Member } from '../types';
 import { MIST_PER_SUI } from '../constants';
+import { useZkLogin } from './useZkLogin';
 
 export interface RecipientShare {
   member: Member;
@@ -24,6 +24,9 @@ export interface SplitResult {
 
 export function useSplitTransaction() {
   const client = useCurrentClient();
+  const walletAccount = useCurrentAccount();
+  const { zkAccount } = useZkLogin();
+  const activeAddress = walletAccount?.address || zkAccount?.address;
   const { signAndExecuteTransaction } = useDAppKit();
   const queryClient = useQueryClient();
 
@@ -32,6 +35,11 @@ export function useSplitTransaction() {
   const [result, setResult] = useState<SplitResult | null>(null);
 
   async function execute(params: SplitParams): Promise<SplitResult | null> {
+    if (!activeAddress) {
+      setError('Please connect a Sui wallet or sign in with Google (zkLogin) to split expenses.');
+      return null;
+    }
+
     const { shares } = params;
     if (!shares || shares.length === 0) {
       setError('Select at least one recipient');

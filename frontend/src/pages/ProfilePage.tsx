@@ -12,6 +12,7 @@ import {
 } from '../components/Icons';
 import { AVATAR_COLORS } from '../constants';
 import { upsertUser, fetchUser } from '../api';
+import { useSuiNSName } from '../hooks/useSuiNS';
 
 
 // Inline 2-D illustration for the connect screen
@@ -35,6 +36,7 @@ function ConnectIllustration() {
 export function ProfilePage() {
   const account = useCurrentAccount();
   const queryClient = useQueryClient();
+  const { data: suinsDomainName } = useSuiNSName(account?.address);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [editing, setEditing] = useState(false);
@@ -322,6 +324,18 @@ export function ProfilePage() {
                 ? <CheckCircleIcon size={16} color="#3a7a3c" strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
                 : <CopyIcon size={16} color="var(--text-3)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />}
             </button>
+
+            {suinsDomainName && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm color-text3">SuiNS Domain</span>
+                <span
+                  className="badge badge-purple"
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontWeight: 700 }}
+                >
+                  🌐 {suinsDomainName}
+                </span>
+              </div>
+            )}
 
             <div className="flex items-center justify-between">
               <span className="text-sm color-text3">Network</span>

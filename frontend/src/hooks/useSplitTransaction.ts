@@ -160,6 +160,10 @@ export function useSplitTransaction() {
       ) {
         rawMsg = 'Insufficient SUI balance for this payment and gas fee. Please request Testnet SUI from faucet.';
       } else if (
+        /password/i.test(rawMsg)
+      ) {
+        rawMsg = 'Incorrect password in Slush Wallet. The transaction was rejected by your wallet.';
+      } else if (
         /wallet is locked/i.test(rawMsg) ||
         /wallet locked/i.test(rawMsg)
       ) {

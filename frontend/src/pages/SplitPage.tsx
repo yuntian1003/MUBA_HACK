@@ -874,7 +874,7 @@ export function SplitPage() {
               ))}
             </div>
 
-            {result.digest && (
+            {result.digest ? (
               <a
                 href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
                 target="_blank"
@@ -884,6 +884,17 @@ export function SplitPage() {
               >
                 <LinkIcon size={14} color="var(--text-2)" strokeWidth={2} />
                 View on SuiVision
+              </a>
+            ) : (
+              <a
+                href={`https://testnet.suivision.xyz/account/${account?.address}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-ghost btn-sm"
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <LinkIcon size={14} color="var(--text-2)" strokeWidth={2} />
+                View on SuiVision Explorer
               </a>
             )}
 

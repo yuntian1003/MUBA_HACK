@@ -1,13 +1,18 @@
-// src/pages/HomePage.tsx
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../components/Avatar';
 import {
   SplitIcon, CommunityIcon, FriendsIcon,
   ShieldIcon, GlobeIcon, BoltIcon, CoinIcon,
+  PayIcon, AlertCircleIcon, CheckCircleIcon, LinkIcon,
 } from '../components/Icons';
-import { motion } from 'framer-motion';
+import { fetchPaymentRequests, updatePaymentRequest } from '../api';
+import { usePayRequest } from '../hooks/usePayRequest';
+import type { PaymentRequest } from '../types';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // Small 2-D illustration for the connect blob
 function SplitIllustration() {
@@ -113,6 +118,35 @@ const FEATURE_TAGS = [
 export function HomePage() {
   const account = useCurrentAccount();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { pay, isPaying, payError, successDigest } = usePayRequest();
+  const [activeReqId, setActiveReqId] = useState<string | null>(null);
+
+  const { data: payRequests = { incoming: [], outgoing: [] } } = useQuery({
+    queryKey: ['payment-requests', account?.address],
+    queryFn: () => fetchPaymentRequests(account?.address || ''),
+    enabled: !!account?.address,
+    refetchInterval: 8000,
+  });
+
+  const incomingRequests: PaymentRequest[] = payRequests.incoming || [];
+
+  async function handleApprovePay(req: PaymentRequest) {
+    setActiveReqId(req.id);
+    const digest = await pay(req);
+    if (digest) {
+      queryClient.invalidateQueries({ queryKey: ['payment-requests'] });
+    }
+  }
+
+  async function handleDecline(reqId: string) {
+    try {
+      await updatePaymentRequest(reqId, { status: 'declined' });
+      queryClient.invalidateQueries({ queryKey: ['payment-requests'] });
+    } catch (err) {
+      console.error('Failed to decline request:', err);
+    }
+  }
 
   if (!account) {
     return (
@@ -161,7 +195,7 @@ export function HomePage() {
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        style={{ marginBottom: 28 }}
+        style={{ marginBottom: 20 }}
       >
         <div className="flex items-center gap-12" style={{ marginBottom: 6 }}>
           <Avatar name={account.address} color="#9F9DF3" size="lg" />
@@ -171,6 +205,148 @@ export function HomePage() {
           </div>
         </div>
       </motion.div>
+
+      {/* ── Incoming Payment Requests Notification Card ─────────── */}
+      <AnimatePresence>
+        {incomingRequests.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, height: 0 }}
+            style={{ marginBottom: 24 }}
+          >
+            <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+              <div className="flex items-center gap-8">
+                <span style={{
+                  width: 8, height: 8, borderRadius: '50%',
+                  background: '#c0446b', display: 'inline-block',
+                  boxShadow: '0 0 8px rgba(192, 68, 107, 0.6)',
+                }} />
+                <p className="section-title" style={{ margin: 0, color: '#c0446b', fontWeight: 800 }}>
+                  INCOMING PAYMENT REQUESTS ({incomingRequests.length})
+                </p>
+              </div>
+              <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>Action Required</span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {incomingRequests.map((req) => (
+                <div
+                  key={req.id}
+                  className="clay-card flat"
+                  style={{
+                    padding: '16px 18px',
+                    background: 'rgba(255, 255, 255, 0.95)',
+                    border: '1.5px solid rgba(159, 157, 243, 0.35)',
+                    boxShadow: '0 6px 20px rgba(159, 157, 243, 0.12)',
+                  }}
+                >
+                  <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+                    <div className="flex items-center gap-10">
+                      <Avatar name={req.requesterAddress} color="#9F9DF3" size="sm" />
+                      <div>
+                        <div className="font-bold text-sm color-deep">{req.requesterName}</div>
+                        <div className="text-xs color-text3">{req.purpose || 'Payment Request'}</div>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="font-bold text-base color-deep">
+                        {req.amountSui.toFixed(4)} <span className="text-xs color-text3 font-semibold">SUI</span>
+                      </div>
+                      <span className="text-xs color-text3">Requested</span>
+                    </div>
+                  </div>
+
+                  {payError && activeReqId === req.id && (
+                    <div style={{
+                      padding: '8px 12px',
+                      background: 'rgba(255,155,179,0.2)',
+                      borderRadius: 10,
+                      marginBottom: 10,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}>
+                      <AlertCircleIcon size={14} color="#c0446b" strokeWidth={2} />
+                      <span className="text-xs" style={{ color: '#c0446b', fontWeight: 500 }}>{payError}</span>
+                    </div>
+                  )}
+
+                  {successDigest && activeReqId === req.id && (
+                    <div style={{
+                      padding: '8px 12px',
+                      background: 'rgba(201,235,202,0.3)',
+                      borderRadius: 10,
+                      marginBottom: 10,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 6,
+                    }}>
+                      <div className="flex items-center gap-6">
+                        <CheckCircleIcon size={14} color="#256328" strokeWidth={2.4} />
+                        <span className="text-xs font-bold" style={{ color: '#256328' }}>Paid Successfully!</span>
+                      </div>
+                      <a
+                        href={`https://testnet.suivision.xyz/txblock/${successDigest}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-semibold"
+                        style={{ color: 'var(--deep)', display: 'flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <LinkIcon size={11} color="currentColor" strokeWidth={2} />
+                        View
+                      </a>
+                    </div>
+                  )}
+
+                  <div className="flex gap-8">
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm flex-1"
+                      disabled={isPaying && activeReqId === req.id}
+                      onClick={() => handleDecline(req.id)}
+                      style={{
+                        borderRadius: 12,
+                        padding: '8px 12px',
+                        fontSize: '0.82rem',
+                        color: 'var(--text-3)',
+                      }}
+                    >
+                      Decline
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm flex-2"
+                      disabled={isPaying && activeReqId === req.id}
+                      onClick={() => handleApprovePay(req)}
+                      style={{
+                        borderRadius: 12,
+                        padding: '8px 16px',
+                        fontSize: '0.82rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        background: 'linear-gradient(135deg, var(--deep), #6353AC)',
+                      }}
+                    >
+                      {isPaying && activeReqId === req.id ? (
+                        <><span className="spinner" style={{ width: 14, height: 14 }} /> Paying…</>
+                      ) : (
+                        <>
+                          <PayIcon size={14} color="#fff" strokeWidth={2.2} />
+                          Approve &amp; Pay {req.amountSui.toFixed(4)} SUI
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Hero tagline */}
       <motion.div

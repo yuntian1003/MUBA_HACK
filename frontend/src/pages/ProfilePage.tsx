@@ -8,10 +8,10 @@ import { Avatar } from '../components/Avatar';
 import {
   WalletIcon, ShieldIcon, GlobeIcon, CheckCircleIcon,
   CopyIcon, EditIcon, HistoryIcon,
-  LinkIcon, EmptyBoxIcon, LockIcon,
+  LinkIcon, EmptyBoxIcon, LockIcon, EmailIcon,
 } from '../components/Icons';
 import { AVATAR_COLORS } from '../constants';
-import { upsertUser } from '../api';
+import { upsertUser, fetchUser } from '../api';
 
 
 // Inline 2-D illustration for the connect screen
@@ -36,6 +36,7 @@ export function ProfilePage() {
   const account = useCurrentAccount();
   const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
   const [editing, setEditing] = useState(false);
   const [attemptedSaveName, setAttemptedSaveName] = useState(false);
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
@@ -45,6 +46,15 @@ export function ProfilePage() {
   useEffect(() => {
     if (account) {
       setDisplayName(localStorage.getItem(`nickname-${account.address}`) || account.label || '');
+      setEmail(localStorage.getItem(`email-${account.address}`) || '');
+      // Also sync from backend
+      fetchUser(account.address).then((u) => {
+        if (u) {
+          if (u.nickname) setDisplayName(u.nickname);
+          if (u.email) setEmail(u.email);
+          if (u.avatarColor) setSelectedColor(u.avatarColor);
+        }
+      }).catch(console.error);
     }
   }, [account]);
 
@@ -55,9 +65,10 @@ export function ProfilePage() {
     setSaveMsg('saving');
     try {
       // Save to localStorage for instant offline reads
-      localStorage.setItem(`nickname-${account.address}`, displayName);
+      localStorage.setItem(`nickname-${account.address}`, displayName.trim());
+      if (email.trim()) localStorage.setItem(`email-${account.address}`, email.trim());
       // Sync to backend so others can see the user in Friends/Communities
-      await upsertUser(account.address, displayName, selectedColor);
+      await upsertUser(account.address, displayName.trim(), selectedColor, email.trim());
       queryClient.invalidateQueries({ queryKey: ['users'] });
       setSaveMsg('saved');
       setTimeout(() => setSaveMsg('idle'), 2500);
@@ -187,34 +198,68 @@ export function ProfilePage() {
             )}
 
             {/* Display name */}
+            {/* Display name & Email */}
             {editing ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: '100%', maxWidth: 280 }}>
-                <div className="flex gap-8 w-full">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', maxWidth: 280 }}>
+                <div>
+                  <label className="text-xs color-text3 font-semibold mb-2 block">Display Name *</label>
                   <input
                     className="input"
                     placeholder="Display name"
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
-                    style={{ flex: 1 }}
                     autoFocus
                   />
+                  {attemptedSaveName && !displayName.trim() && (
+                    <p className="text-xs" style={{ color: '#c0392b', margin: '2px 0 0 2px', fontWeight: 500 }}>
+                      * Display name cannot be empty
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-xs color-text3 font-semibold mb-2 block">Gmail / Email</label>
+                  <input
+                    className="input"
+                    type="email"
+                    placeholder="e.g. yourname@gmail.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                  <p className="text-xs color-text3" style={{ marginTop: 4 }}>
+                    Allows friends to find you by email
+                  </p>
+                </div>
+
+                <div className="flex gap-8 mt-4">
                   <button
-                    className="btn btn-primary btn-sm"
+                    className="btn btn-ghost btn-sm flex-1"
+                    onClick={() => setEditing(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary btn-sm flex-1"
                     disabled={saveMsg === 'saving'}
                     onClick={handleSave}
                   >
                     {saveMsg === 'saving' ? 'Saving…' : 'Save'}
                   </button>
                 </div>
-                {attemptedSaveName && !displayName.trim() && (
-                  <p className="text-xs" style={{ color: '#c0392b', margin: '2px 0 0 2px', fontWeight: 500 }}>
-                    * Display name cannot be empty
-                  </p>
-                )}
               </div>
             ) : (
               <div style={{ textAlign: 'center' }}>
-                <h3 style={{ marginBottom: 6 }}>{displayName || 'Anonymous'}</h3>
+                <h3 style={{ marginBottom: 4 }}>{displayName || 'Anonymous'}</h3>
+                {email ? (
+                  <p className="text-xs color-text3" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                    <EmailIcon size={13} color="var(--text-3)" />
+                    {email}
+                  </p>
+                ) : (
+                  <p className="text-xs color-text3" style={{ marginBottom: 8, fontStyle: 'italic' }}>
+                    No email linked
+                  </p>
+                )}
                 {saveMsg === 'saved' && (
                   <p className="text-sm" style={{ color: '#3a7a3c', marginBottom: 6 }}>✅ Profile saved to server!</p>
                 )}
@@ -224,10 +269,10 @@ export function ProfilePage() {
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => setEditing(true)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, margin: '0 auto' }}
                 >
                   <EditIcon size={13} color="var(--text-2)" strokeWidth={2} />
-                  {displayName ? 'Edit name' : 'Set display name'}
+                  {displayName ? 'Edit profile' : 'Set profile details'}
                 </button>
               </div>
             )}

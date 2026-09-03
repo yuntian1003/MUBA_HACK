@@ -77,6 +77,18 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
+// Delete a user profile (remove friend)
+app.delete('/api/users/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    await db.collection('users').doc(address).delete();
+    res.json({ success: true, address });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
 // Search all users (simple client‑side filter for demo)
 app.get('/api/users', async (req, res) => {
   try {
@@ -153,6 +165,87 @@ app.post('/api/communities', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to create community' });
+  }
+});
+
+// ------------------- Payment Requests API -------------------
+// Create one or more payment requests
+app.post('/api/payment-requests', async (req, res) => {
+  try {
+    const rawRequests = Array.isArray(req.body.requests) ? req.body.requests : [req.body];
+    const created: any[] = [];
+
+    for (const r of rawRequests) {
+      if (!r.payerAddress || !r.requesterAddress || !r.amountSui) {
+        continue;
+      }
+      const id = 'payreq_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      const data = {
+        id,
+        requesterAddress: r.requesterAddress.trim(),
+        requesterName: r.requesterName || 'Requester',
+        payerAddress: r.payerAddress.trim(),
+        payerName: r.payerName || 'Friend',
+        amountSui: Number(r.amountSui),
+        purpose: r.purpose || 'Payment Request',
+        status: 'pending',
+        createdAt: Date.now(),
+      };
+      await db.collection('payment_requests').doc(id).set(data);
+      created.push(data);
+    }
+
+    res.json({ success: true, count: created.length, requests: created });
+  } catch (e) {
+    console.error('Error creating payment requests:', e);
+    res.status(500).json({ error: 'Failed to create payment requests' });
+  }
+});
+
+// Get payment requests for an address (incoming requests to pay, and outgoing requests)
+app.get('/api/payment-requests', async (req, res) => {
+  try {
+    const address = (req.query.address as string || '').toLowerCase().trim();
+    const snap = await db.collection('payment_requests').get();
+    const all = snap.docs.map(d => d.data());
+
+    if (!address) {
+      return res.json({ incoming: all, outgoing: [] });
+    }
+
+    const incoming = all
+      .filter((r: any) => r.payerAddress?.toLowerCase() === address && r.status === 'pending')
+      .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    const outgoing = all
+      .filter((r: any) => r.requesterAddress?.toLowerCase() === address)
+      .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    res.json({ incoming, outgoing });
+  } catch (e) {
+    console.error('Error fetching payment requests:', e);
+    res.status(500).json({ error: 'Failed to fetch payment requests' });
+  }
+});
+
+// Update payment request status (e.g. mark as paid or declined)
+app.patch('/api/payment-requests/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, digest } = req.body;
+    if (!status) return res.status(400).json({ error: 'Status required' });
+
+    const updateData: any = { status };
+    if (status === 'paid') {
+      updateData.paidAt = Date.now();
+      if (digest) updateData.digest = digest;
+    }
+
+    await db.collection('payment_requests').doc(id).set(updateData, { merge: true });
+    res.json({ success: true, id, ...updateData });
+  } catch (e) {
+    console.error('Error updating payment request:', e);
+    res.status(500).json({ error: 'Failed to update payment request' });
   }
 });
 

@@ -13,7 +13,7 @@ import {
 } from '../components/Icons';
 import { useSplitTransaction } from '../hooks/useSplitTransaction';
 import { DEMO_MEMBERS, DEMO_COMMUNITIES } from '../constants';
-import { fetchUsers } from '../api';
+import { fetchUsers, createPaymentRequests } from '../api';
 import { apiUserToMember } from '../types';
 import type { Member } from '../types';
 
@@ -62,6 +62,9 @@ export function SplitPage() {
 
   const [step, setStep] = useState<Step>(1);
   const [search, setSearch] = useState('');
+  const [isSendingRequest, setIsSendingRequest] = useState(false);
+  const [requestSent, setRequestSent] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
 
   // ── Fetch users from backend ──────────────────────────────────
   const { data: rawUsers = [] } = useQuery({
@@ -71,11 +74,15 @@ export function SplitPage() {
   });
 
   const allMembers = useMemo(() => {
-    const backendMembers: Member[] = rawUsers.map(apiUserToMember);
+    const backendMembers: Member[] = rawUsers
+      .filter((u: any) => !account?.address || u.address?.toLowerCase() !== account.address.toLowerCase())
+      .map(apiUserToMember);
     const map = new Map<string, Member>();
 
     if (locationState?.preselectedMember) {
-      map.set(locationState.preselectedMember.id, locationState.preselectedMember);
+      if (!account?.address || locationState.preselectedMember.walletAddress?.toLowerCase() !== account.address.toLowerCase()) {
+        map.set(locationState.preselectedMember.id, locationState.preselectedMember);
+      }
     }
     backendMembers.forEach((m) => map.set(m.id, m));
     DEMO_MEMBERS.forEach((m) => {
@@ -83,7 +90,7 @@ export function SplitPage() {
     });
 
     return Array.from(map.values());
-  }, [rawUsers, locationState]);
+  }, [rawUsers, locationState, account?.address]);
 
   // Preselect friend if navigated from Friends page
   const [selected, setSelected] = useState<Member[]>(() => {
@@ -231,7 +238,34 @@ export function SplitPage() {
   }, [purpose, totalAmount, selected, perPerson, splitMode, shares]);
 
   async function handleExecute() {
-    if (!validationOk) return;
+    if (!validationOk || !account) return;
+
+    if (direction === 'receive') {
+      setIsSendingRequest(true);
+      setRequestError(null);
+      try {
+        const requesterName =
+          localStorage.getItem(`nickname-${account.address}`) || account.label || 'Friend';
+        const requests = shares.map((s) => ({
+          requesterAddress: account.address,
+          requesterName,
+          payerAddress: s.member.walletAddress,
+          payerName: s.member.name,
+          amountSui: s.amountSui,
+          purpose: purpose.trim(),
+        }));
+        await createPaymentRequests(requests);
+        setRequestSent(true);
+        setStep(4);
+      } catch (err: any) {
+        console.error('Failed to create payment requests:', err);
+        setRequestError(err instanceof Error ? err.message : 'Failed to send payment request');
+      } finally {
+        setIsSendingRequest(false);
+      }
+      return;
+    }
+
     const res = await execute({
       shares,
       purpose,
@@ -250,6 +284,8 @@ export function SplitPage() {
     setDirection('pay');
     setSplitMode('equal');
     setCustomAmounts({});
+    setRequestSent(false);
+    setRequestError(null);
   }
 
   if (!account) {
@@ -726,12 +762,14 @@ export function SplitPage() {
             transition={{ duration: 0.25 }}
           >
             <div className="clay-card flat" style={{ padding: '20px 22px', marginBottom: 16 }}>
-              <p className="section-title" style={{ marginBottom: 12 }}>PAYMENT SUMMARY</p>
+              <p className="section-title" style={{ marginBottom: 12 }}>
+                {direction === 'pay' ? 'PAYMENT SUMMARY' : 'REQUEST SUMMARY'}
+              </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {[
                   { label: 'Purpose', value: purpose },
                   {
-                    label: 'Total Distribution',
+                    label: direction === 'pay' ? 'Total Distribution' : 'Total to Collect',
                     value: `${(splitMode === 'equal' ? parseFloat(totalAmount) || 0 : customTotal).toFixed(4)} SUI`,
                     bold: true,
                   },
@@ -758,16 +796,18 @@ export function SplitPage() {
                 </div>
                 <div className="divider" style={{ margin: '4px 0' }} />
                 <div className="flex justify-between items-center">
-                  <span className="color-text3 text-sm">Atomicity</span>
+                  <span className="color-text3 text-sm">{direction === 'pay' ? 'Atomicity' : 'Type'}</span>
                   <span className="badge badge-green" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                     <BoltIcon size={12} color="#3a7a3c" strokeWidth={2} />
-                    Single PTB
+                    {direction === 'pay' ? 'Single PTB' : 'Peer-to-Peer Request'}
                   </span>
                 </div>
               </div>
             </div>
 
-            <p className="section-title" style={{ marginBottom: 10 }}>RECIPIENTS ({shares.length})</p>
+            <p className="section-title" style={{ marginBottom: 10 }}>
+              {direction === 'pay' ? `RECIPIENTS (${shares.length})` : `REQUEST FROM (${shares.length})`}
+            </p>
             <div style={{ marginBottom: 20 }}>
               {shares.map(({ member, amountSui }) => (
                 <div key={member.id} className="flex items-center gap-12 list-row" style={{ cursor: 'default' }}>
@@ -776,7 +816,9 @@ export function SplitPage() {
                     <div className="list-row-title">{member.name}</div>
                     <div className="list-row-sub truncate">{member.walletAddress}</div>
                   </div>
-                  <span className="font-bold color-deep">+{amountSui.toFixed(4)} SUI</span>
+                  <span className="font-bold color-deep">
+                    {direction === 'pay' ? `+${amountSui.toFixed(4)}` : `${amountSui.toFixed(4)}`} SUI
+                  </span>
                 </div>
               ))}
             </div>
@@ -784,16 +826,26 @@ export function SplitPage() {
             <div className="clay-card flat" style={{ padding: '14px 18px', background: 'rgba(159,157,243,0.08)', marginBottom: 20 }}>
               <div className="flex items-center gap-8" style={{ marginBottom: 8 }}>
                 <BoltIcon size={16} color="var(--deep)" strokeWidth={2} />
-                <p className="text-sm font-semibold color-deep">How the PTB works</p>
+                <p className="text-sm font-semibold color-deep">
+                  {direction === 'pay' ? 'How the PTB works' : 'How Payment Requests work'}
+                </p>
               </div>
-              <ol style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <li className="text-sm color-text2">Splits your coin into {selected.length} equal parts</li>
-                <li className="text-sm color-text2">Transfers each part atomically to every recipient</li>
-                <li className="text-sm color-text2">All succeed together, or the whole transaction reverts</li>
-              </ol>
+              {direction === 'pay' ? (
+                <ol style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <li className="text-sm color-text2">Splits your coin into {selected.length} equal parts</li>
+                  <li className="text-sm color-text2">Transfers each part atomically to every recipient</li>
+                  <li className="text-sm color-text2">All succeed together, or the whole transaction reverts</li>
+                </ol>
+              ) : (
+                <ol style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <li className="text-sm color-text2">Creates a pending payment request in the system for each friend</li>
+                  <li className="text-sm color-text2">Friends will see an incoming payment request on their dashboard</li>
+                  <li className="text-sm color-text2">They can approve and pay directly from their wallet to you</li>
+                </ol>
+              )}
             </div>
 
-            {txError && (
+            {(txError || requestError) && (
               <div style={{
                 padding: '12px 16px',
                 background: 'rgba(255,155,179,0.15)',
@@ -802,7 +854,7 @@ export function SplitPage() {
                 display: 'flex', alignItems: 'flex-start', gap: 8,
               }}>
                 <AlertCircleIcon size={16} color="#c0446b" strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
-                <p className="text-sm" style={{ color: '#c0446b' }}>{txError}</p>
+                <p className="text-sm" style={{ color: '#c0446b' }}>{txError || requestError}</p>
               </div>
             )}
 
@@ -825,16 +877,25 @@ export function SplitPage() {
               </button>
               <button
                 className="btn btn-primary flex-1"
-                disabled={isLoading}
+                disabled={isLoading || isSendingRequest}
                 onClick={handleExecute}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
               >
-                {isLoading ? (
-                  <><span className="spinner" style={{ width: 16, height: 16 }} /> Awaiting wallet…</>
+                {isLoading || isSendingRequest ? (
+                  <><span className="spinner" style={{ width: 16, height: 16 }} /> {direction === 'receive' ? 'Sending Request…' : 'Awaiting wallet…'}</>
                 ) : (
                   <>
-                    <WalletIcon size={16} color="#fff" strokeWidth={2} />
-                    Approve &amp; Execute
+                    {direction === 'pay' ? (
+                      <>
+                        <WalletIcon size={16} color="#fff" strokeWidth={2} />
+                        Approve &amp; Execute
+                      </>
+                    ) : (
+                      <>
+                        <ReceiveIcon size={16} color="#fff" strokeWidth={2} />
+                        Send Payment Request
+                      </>
+                    )}
                   </>
                 )}
               </button>
@@ -843,73 +904,132 @@ export function SplitPage() {
         )}
 
         {/* ── Step 4: Success ────────────────────────────── */}
-        {step === 4 && result && (
-          <motion.div
-            key="step4"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35, type: 'spring', bounce: 0.4 }}
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 20, paddingTop: 20 }}
-          >
-            <div className="success-ring">
-              <CheckCircleIcon size={48} color="#3a7a3c" strokeWidth={1.6} />
-            </div>
-            <div>
-              <h2 style={{ marginBottom: 8 }}>Payment Completed</h2>
-              <p className="color-text2">Your atomic PTB was executed successfully.</p>
-            </div>
-
-            <div className="clay-card flat" style={{ width: '100%', padding: '16px 20px' }}>
-              <p className="section-title" style={{ marginBottom: 12 }}>TRANSFER STATUS</p>
-              {result.amounts.map(({ member, amountSui }) => (
-                <div key={member.id} className="flex items-center gap-12" style={{ marginBottom: 10 }}>
-                  <Avatar member={member} size="sm" />
-                  <div className="flex-1">
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-1)' }}>{member.name}</div>
-                  </div>
-                  <span className="font-bold" style={{ color: '#3a7a3c' }}>+{amountSui.toFixed(4)} SUI</span>
-                  <CheckCircleIcon size={16} color="#3a7a3c" strokeWidth={2.2} />
+        {step === 4 && (
+          <AnimatePresence mode="wait">
+            {requestSent ? (
+              <motion.div
+                key="step4-request"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.35, type: 'spring', bounce: 0.4 }}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 20, paddingTop: 20 }}
+              >
+                <div className="success-ring">
+                  <CheckCircleIcon size={48} color="#3a7a3c" strokeWidth={1.6} />
                 </div>
-              ))}
-            </div>
+                <div>
+                  <h2 style={{ marginBottom: 8 }}>Payment Request Sent!</h2>
+                  <p className="color-text2">
+                    Your request for <strong>{purpose}</strong> has been created.
+                  </p>
+                </div>
 
-            {result.digest ? (
-              <a
-                href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost btn-sm"
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-              >
-                <LinkIcon size={14} color="var(--text-2)" strokeWidth={2} />
-                View on SuiVision
-              </a>
-            ) : (
-              <a
-                href={`https://testnet.suivision.xyz/account/${account?.address}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost btn-sm"
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-              >
-                <LinkIcon size={14} color="var(--text-2)" strokeWidth={2} />
-                View on SuiVision Explorer
-              </a>
-            )}
+                <div className="clay-card flat" style={{ width: '100%', padding: '16px 20px' }}>
+                  <p className="section-title" style={{ marginBottom: 12 }}>REQUEST SUMMARY</p>
+                  {shares.map(({ member, amountSui }) => (
+                    <div key={member.id} className="flex items-center gap-12" style={{ marginBottom: 10 }}>
+                      <Avatar member={member} size="sm" />
+                      <div className="flex-1" style={{ textAlign: 'left' }}>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-1)' }}>{member.name}</div>
+                        <div className="text-xs color-text3">{member.walletAddress.slice(0, 10)}…</div>
+                      </div>
+                      <span className="font-bold color-deep">{amountSui.toFixed(4)} SUI</span>
+                      <span className="badge badge-purple text-xs">Pending</span>
+                    </div>
+                  ))}
+                </div>
 
-            <div className="flex gap-12">
-              <button className="btn btn-ghost" onClick={handleReset}>New Split</button>
-              <button
-                className="btn btn-primary"
-                onClick={() => navigate('/')}
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                <div className="clay-card flat" style={{ padding: '14px 18px', background: 'rgba(201,235,202,0.2)', width: '100%', textAlign: 'left' }}>
+                  <p className="text-sm" style={{ color: '#256328', fontWeight: 600 }}>
+                    ✓ What happens next?
+                  </p>
+                  <p className="text-xs color-text2 mt-4" style={{ lineHeight: 1.5 }}>
+                    When your friend connects their wallet, they will see this incoming request on their dashboard with an <strong>[Approve &amp; Pay]</strong> button to transfer the SUI directly to you.
+                  </p>
+                </div>
+
+                <div className="flex gap-12 w-full">
+                  <button className="btn btn-ghost flex-1" onClick={handleReset}>New Split</button>
+                  <button
+                    className="btn btn-primary flex-1"
+                    onClick={() => navigate('/')}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  >
+                    <BackIcon size={15} color="#fff" strokeWidth={2} />
+                    Home
+                  </button>
+                </div>
+              </motion.div>
+            ) : result ? (
+              <motion.div
+                key="step4-pay"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.35, type: 'spring', bounce: 0.4 }}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 20, paddingTop: 20 }}
               >
-                <BackIcon size={15} color="#fff" strokeWidth={2} />
-                Home
-              </button>
-            </div>
-          </motion.div>
+                <div className="success-ring">
+                  <CheckCircleIcon size={48} color="#3a7a3c" strokeWidth={1.6} />
+                </div>
+                <div>
+                  <h2 style={{ marginBottom: 8 }}>Payment Completed</h2>
+                  <p className="color-text2">Your atomic PTB was executed successfully.</p>
+                </div>
+
+                <div className="clay-card flat" style={{ width: '100%', padding: '16px 20px' }}>
+                  <p className="section-title" style={{ marginBottom: 12 }}>TRANSFER STATUS</p>
+                  {result.amounts.map(({ member, amountSui }) => (
+                    <div key={member.id} className="flex items-center gap-12" style={{ marginBottom: 10 }}>
+                      <Avatar member={member} size="sm" />
+                      <div className="flex-1">
+                        <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-1)' }}>{member.name}</div>
+                      </div>
+                      <span className="font-bold" style={{ color: '#3a7a3c' }}>+{amountSui.toFixed(4)} SUI</span>
+                      <CheckCircleIcon size={16} color="#3a7a3c" strokeWidth={2.2} />
+                    </div>
+                  ))}
+                </div>
+
+                {result.digest ? (
+                  <a
+                    href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-ghost btn-sm"
+                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <LinkIcon size={14} color="var(--text-2)" strokeWidth={2} />
+                    View on SuiVision
+                  </a>
+                ) : (
+                  <a
+                    href={`https://testnet.suivision.xyz/account/${account?.address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-ghost btn-sm"
+                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <LinkIcon size={14} color="var(--text-2)" strokeWidth={2} />
+                    View on SuiVision Explorer
+                  </a>
+                )}
+
+                <div className="flex gap-12 w-full">
+                  <button className="btn btn-ghost flex-1" onClick={handleReset}>New Split</button>
+                  <button
+                    className="btn btn-primary flex-1"
+                    onClick={() => navigate('/')}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  >
+                    <BackIcon size={15} color="#fff" strokeWidth={2} />
+                    Home
+                  </button>
+                </div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         )}
       </AnimatePresence>
 

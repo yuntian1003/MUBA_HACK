@@ -1,6 +1,6 @@
-// src/pages/FriendsPage.tsx
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Avatar } from '../components/Avatar';
@@ -9,7 +9,7 @@ import {
   ViewProfileIcon, PayIcon, ChevronRightIcon, EmptyBoxIcon,
   PlusIcon, UserPlusIcon, EmailIcon, WalletIcon, CheckIcon,
 } from '../components/Icons';
-import { fetchUsers, upsertUser } from '../api';
+import { fetchUsers, upsertUser, deleteUser } from '../api';
 import { apiUserToMember } from '../types';
 import { AVATAR_COLORS } from '../constants';
 import type { Member } from '../types';
@@ -19,6 +19,7 @@ export interface FriendRequestItem {
   name: string;
   avatarColor: string;
   email?: string;
+  walletAddress?: string;
   timestamp: string;
   status: 'pending' | 'accepted' | 'rejected' | 'sent';
 }
@@ -96,6 +97,7 @@ const INITIAL_SENT_REQUESTS: FriendRequestItem[] = [
 type TabType = 'all' | 'requests' | 'sent';
 
 export function FriendsPage() {
+  const account = useCurrentAccount();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabType>('all');
@@ -129,7 +131,10 @@ export function FriendsPage() {
     staleTime: 20_000,
   });
 
-  const friends: Member[] = rawUsers.map(apiUserToMember);
+  // Exclude current logged in user from friends list
+  const friends: Member[] = rawUsers
+    .filter((u: any) => !account?.address || u.address?.toLowerCase() !== account.address.toLowerCase())
+    .map(apiUserToMember);
 
   // ── Save requests to localStorage ───────────────────────────
   function updateIncoming(newList: FriendRequestItem[]) {
@@ -149,9 +154,9 @@ export function FriendsPage() {
     );
     updateIncoming(updated);
 
-    // Save to friends backend
+    // Save to friends backend with real walletAddress if known
     try {
-      await upsertUser('', reqItem.name, reqItem.avatarColor, reqItem.email);
+      await upsertUser(reqItem.walletAddress || '', reqItem.name, reqItem.avatarColor, reqItem.email);
       queryClient.invalidateQueries({ queryKey: ['users'] });
     } catch (e) {
       console.error(e);
@@ -165,32 +170,66 @@ export function FriendsPage() {
     updateIncoming(updated);
   }
 
-  // ── Add Friend Mutation ─────────────────────────────────────
+  function handleCancelSent(reqId: string) {
+    const updated = sentRequests.filter((r) => r.id !== reqId);
+    updateSent(updated);
+  }
+
+  async function handleRemoveFriend(friend: Member) {
+    try {
+      if (friend.walletAddress) {
+        await deleteUser(friend.walletAddress);
+      }
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+    } catch (e) {
+      console.error('Failed to remove friend:', e);
+    }
+    setSelectedFriend(null);
+  }
+
+  // ── Add Friend Mutation (Send Request Only) ──────────────────
   const addFriendMutation = useMutation({
     mutationFn: async () => {
       const address = addMethod === 'address' ? walletInput.trim() : '';
       const email = addMethod === 'gmail' ? gmailInput.trim() : undefined;
       const nickname = friendName.trim();
 
-      // Add to sent requests history
+      let resolvedAddress = address;
+      if (addMethod === 'gmail' && email) {
+        try {
+          const found = await fetchUsers(email);
+          const match = found.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
+          if (match && match.address) {
+            resolvedAddress = match.address;
+          }
+        } catch (e) {
+          console.warn('Failed to resolve email to address:', e);
+        }
+      }
+
+      // Add to sent requests history (pending acceptance by recipient)
       const newSent: FriendRequestItem = {
         id: 'sent-' + Date.now(),
         name: nickname,
         avatarColor: selectedColor,
-        email: email || (addMethod === 'address' ? 'Wallet User' : undefined),
+        email: email || (addMethod === 'address' ? (address.length > 14 ? `${address.slice(0, 8)}…` : address) : undefined),
+        walletAddress: resolvedAddress || undefined,
         timestamp: 'Just now',
         status: 'sent',
       };
       updateSent([newSent, ...sentRequests]);
 
-      return upsertUser(address, nickname, selectedColor, email);
+      // Do NOT call upsertUser here — the recipient must accept the request first!
+      return newSent;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
       setShowAddModal(false);
       setFriendName('');
       setWalletInput('');
       setGmailInput('');
+      setAttemptedAddFriend(false);
+      // Automatically switch to Sent Requests tab so user can see it pending
+      setActiveTab('sent');
     },
   });
 
@@ -587,11 +626,30 @@ export function FriendsPage() {
                     </div>
 
                     {/* Status Badge */}
-                    <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {sentItem.status === 'sent' && (
-                        <span className="badge badge-purple" style={{ fontSize: '0.8rem', padding: '5px 12px' }}>
-                          ⏱ Sent
-                        </span>
+                        <>
+                          <span className="badge badge-purple" style={{ fontSize: '0.8rem', padding: '5px 12px' }}>
+                            ⏱ Sent
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleCancelSent(sentItem.id)}
+                            className="btn btn-sm"
+                            style={{
+                              background: 'rgba(255, 155, 179, 0.22)',
+                              color: '#c0392b',
+                              border: '1.2px solid rgba(192, 57, 43, 0.3)',
+                              fontSize: '0.75rem',
+                              padding: '4px 10px',
+                              borderRadius: 10,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </>
                       )}
                       {sentItem.status === 'accepted' && (
                         <span
@@ -743,7 +801,25 @@ export function FriendsPage() {
               </div>
 
               <button
-                className="btn btn-ghost w-full mt-12 text-sm"
+                type="button"
+                className="btn btn-ghost w-full"
+                onClick={() => handleRemoveFriend(selectedFriend)}
+                style={{
+                  marginTop: 10,
+                  color: '#c0392b',
+                  background: 'rgba(255, 155, 179, 0.16)',
+                  border: '1.2px solid rgba(192, 57, 43, 0.25)',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  padding: '9px 12px',
+                  borderRadius: 12,
+                }}
+              >
+                Remove Contact
+              </button>
+
+              <button
+                className="btn btn-ghost w-full mt-8 text-sm"
                 onClick={() => setSelectedFriend(null)}
               >
                 Close

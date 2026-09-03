@@ -78,4 +78,18 @@ export interface TxHistoryItem {
   status: 'success' | 'failure';
 }
 
+export interface PaymentRequest {
+  id: string;
+  requesterAddress: string;
+  requesterName: string;
+  payerAddress: string;
+  payerName: string;
+  amountSui: number;
+  purpose: string;
+  status: 'pending' | 'paid' | 'declined';
+  createdAt: number;
+  paidAt?: number;
+  digest?: string;
+}
+
 export type Page = 'home' | 'split' | 'community' | 'friends' | 'profile';

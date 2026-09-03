@@ -15,19 +15,12 @@ const STORAGE_KEYS = {
   PROOF: 'smartsplit_zk_proof',
 };
 
-// Fallback demo Google OAuth Client ID if VITE_GOOGLE_CLIENT_ID is not provided
-export const GOOGLE_CLIENT_ID =
-  import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-  '921980006767-demo.apps.googleusercontent.com';
-
-export const REDIRECT_URI = typeof window !== 'undefined'
-  ? `${window.location.origin}/auth/callback`
-  : 'http://localhost:5173/auth/callback';
-
 export interface DecodedJwt {
   sub: string;
   email?: string;
   name?: string;
+  exp?: number;
+  iat?: number;
   picture?: string;
   iss?: string;
   aud?: string;
@@ -36,6 +29,12 @@ export interface DecodedJwt {
 /**
  * Decode JWT token payload without external library
  */
+export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+
+export const REDIRECT_URI = typeof window !== 'undefined'
+  ? `${window.location.origin}/auth/callback`
+  : 'http://localhost:5173/auth/callback';
+
 export function parseJwt(jwtToken: string): DecodedJwt | null {
   try {
     const base64Url = jwtToken.split('.')[1];
@@ -105,6 +104,9 @@ export function getOrCreateUserSalt(): string {
  * Prepare Google OAuth login URL with generated zkLogin nonce
  */
 export function prepareGoogleLoginUrl(maxEpoch: number = 2000): string {
+  if (!GOOGLE_CLIENT_ID) {
+    throw new Error('VITE_GOOGLE_CLIENT_ID is not configured.');
+  }
   const keypair = getOrCreateEphemeralKeypair();
   const randomness = generateRandomness();
 

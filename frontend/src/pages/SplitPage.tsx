@@ -17,6 +17,8 @@ import { DEMO_MEMBERS, DEMO_COMMUNITIES } from '../constants';
 import { fetchUsers, createPaymentRequests } from '../api';
 import { apiUserToMember } from '../types';
 import type { Member } from '../types';
+import { uploadToWalrus, type WalrusUpload } from '../walrus';
+import { detectReceiptAmount, type ReceiptAmount } from '../receiptOcr';
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -135,6 +137,11 @@ export function SplitPage() {
   const [totalAmount, setTotalAmount] = useState('');
   const [splitMode, setSplitMode] = useState<'equal' | 'uneven'>('equal');
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
+  const [receipt, setReceipt] = useState<WalrusUpload | null>(null);
+  const [isUploadingReceipt, setIsUploadingReceipt] = useState(false);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [receiptAmount, setReceiptAmount] = useState<ReceiptAmount | null>(null);
+  const [isReadingReceipt, setIsReadingReceipt] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -286,6 +293,9 @@ export function SplitPage() {
     setDirection('pay');
     setSplitMode('equal');
     setCustomAmounts({});
+    setReceipt(null);
+    setReceiptError(null);
+    setReceiptAmount(null);
     setRequestSent(false);
     setRequestError(null);
   }
@@ -748,6 +758,67 @@ export function SplitPage() {
                     Receive from them
                   </button>
                 </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Receipt image (optional)</label>
+                <input
+                  className="input"
+                  type="file"
+                  accept="image/*"
+                  disabled={isUploadingReceipt}
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    setReceiptError(null);
+                    setReceiptAmount(null);
+                    setIsUploadingReceipt(true);
+                    try {
+                      const uploaded = await uploadToWalrus(file);
+                      setReceipt(uploaded);
+                      setIsUploadingReceipt(false);
+                      setIsReadingReceipt(true);
+                      try {
+                        const detected = await detectReceiptAmount(file);
+                        setReceiptAmount(detected);
+                        if (detected) setTotalAmount(detected.amount.toFixed(2));
+                      } catch {
+                        setReceiptError('Receipt uploaded, but its total could not be read. Enter the amount manually.');
+                      } finally {
+                        setIsReadingReceipt(false);
+                      }
+                    } catch (err) {
+                      setReceipt(null);
+                      setReceiptError(err instanceof Error ? err.message : 'Could not upload receipt.');
+                      setIsUploadingReceipt(false);
+                    }
+                    event.target.value = '';
+                  }}
+                />
+                <p className="text-xs color-text3 mt-6">
+                  {isUploadingReceipt
+                    ? 'Uploading receipt to Walrus…'
+                    : isReadingReceipt
+                    ? 'Reading receipt total…'
+                    : 'Stored on decentralized Walrus testnet storage.'}
+                </p>
+                {receipt && (
+                  <a
+                    href={receipt.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs"
+                    style={{ color: '#256328', fontWeight: 700, wordBreak: 'break-all' }}
+                  >
+                    ✓ Receipt uploaded · {receipt.blobId}
+                  </a>
+                )}
+                {receiptAmount && (
+                  <p className="text-xs" style={{ color: 'var(--deep)', marginTop: 6, fontWeight: 600 }}>
+                    Detected total: {receiptAmount.currency ? `${receiptAmount.currency} ` : ''}{receiptAmount.amount.toFixed(2)}. Verify the amount and convert it to SUI if needed.
+                  </p>
+                )}
+                {receiptError && <p className="text-xs" style={{ color: '#c0392b', marginTop: 6 }}>{receiptError}</p>}
               </div>
             </div>
 

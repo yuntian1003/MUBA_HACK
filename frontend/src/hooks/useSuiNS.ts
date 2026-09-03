@@ -1,7 +1,6 @@
 // src/hooks/useSuiNS.ts
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentClient } from '@mysten/dapp-kit-react';
-import { SuinsClient } from '@mysten/suins';
 
 /**
  * Hook to resolve a .sui domain name to a Sui wallet address (e.g. "alice.sui" -> "0x1234...")
@@ -24,12 +23,8 @@ export function useSuiNSAddress(domainOrAddress?: string) {
       const domainName = trimmed.endsWith('.sui') ? trimmed : `${trimmed}.sui`;
 
       try {
-        const suinsClient = new SuinsClient({
-          client: client as any,
-          network: 'testnet',
-        });
-        const record = await suinsClient.getNameRecord(domainName);
-        return record?.targetAddress || null;
+        const result = await client.resolveNameServiceAddress({ name: domainName });
+        return result.address;
       } catch (err) {
         console.warn(`[SuiNS] Failed to resolve ${domainName}:`, err);
         return null;
@@ -52,12 +47,8 @@ export function useSuiNSName(address?: string) {
       if (!address || !address.startsWith('0x')) return null;
 
       try {
-        // Attempt reverse resolution if supported by client or RPC
-        if ((client as any).resolveNameServiceNames) {
-          const res = await (client as any).resolveNameServiceNames({ owner: address });
-          return res?.data?.[0] || null;
-        }
-        return null;
+        const result = await client.defaultNameServiceName({ address });
+        return result.data.name;
       } catch (err) {
         console.warn(`[SuiNS] Failed reverse lookup for ${address}:`, err);
         return null;

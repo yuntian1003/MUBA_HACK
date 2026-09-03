@@ -4,20 +4,28 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import admin from 'firebase-admin';
 import path from 'path';
+import fs from 'fs';
 
 dotenv.config();
 
 // Initialise Firebase Admin SDK
 const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ??
     path.resolve(__dirname, 'firebase-key.json');
+const hasFirebaseCredentials = fs.existsSync(serviceAccountPath);
 
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccountPath as string),
-  });
+  if (hasFirebaseCredentials) {
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccountPath as string),
+    });
+  } else {
+    admin.initializeApp();
+    console.warn('Firebase credentials not found. Payment requests will use temporary in-memory storage.');
+  }
 }
 
 const db = admin.firestore();
+const memoryPaymentRequests = new Map<string, any>();
 
 const app = express();
 app.use(cors());
@@ -191,7 +199,11 @@ app.post('/api/payment-requests', async (req, res) => {
         status: 'pending',
         createdAt: Date.now(),
       };
-      await db.collection('payment_requests').doc(id).set(data);
+      if (hasFirebaseCredentials) {
+        await db.collection('payment_requests').doc(id).set(data);
+      } else {
+        memoryPaymentRequests.set(id, data);
+      }
       created.push(data);
     }
 
@@ -206,8 +218,9 @@ app.post('/api/payment-requests', async (req, res) => {
 app.get('/api/payment-requests', async (req, res) => {
   try {
     const address = (req.query.address as string || '').toLowerCase().trim();
-    const snap = await db.collection('payment_requests').get();
-    const all = snap.docs.map(d => d.data());
+    const all = hasFirebaseCredentials
+      ? (await db.collection('payment_requests').get()).docs.map(d => d.data())
+      : Array.from(memoryPaymentRequests.values());
 
     if (!address) {
       return res.json({ incoming: all, outgoing: [] });
@@ -241,7 +254,12 @@ app.patch('/api/payment-requests/:id', async (req, res) => {
       if (digest) updateData.digest = digest;
     }
 
-    await db.collection('payment_requests').doc(id).set(updateData, { merge: true });
+    if (hasFirebaseCredentials) {
+      await db.collection('payment_requests').doc(id).set(updateData, { merge: true });
+    } else {
+      const existing = memoryPaymentRequests.get(id);
+      if (existing) memoryPaymentRequests.set(id, { ...existing, ...updateData });
+    }
     res.json({ success: true, id, ...updateData });
   } catch (e) {
     console.error('Error updating payment request:', e);

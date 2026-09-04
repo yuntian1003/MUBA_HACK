@@ -93,24 +93,31 @@ export function ProfilePage() {
         if (u.linkedWalletAddress) foundWallet = u.linkedWalletAddress;
       }
 
-      // Auto-link if same email has a linked account
-      if ((!foundZk || !foundWallet) && currentEmail) {
+      // Auto-link if needed and not already set
+      const needsLink = account.isZk ? !foundWallet : !foundZk;
+      if (needsLink && currentEmail) {
         try {
           const users = await fetchUsers(currentEmail);
-          const match = users.find((mu: any) =>
+          // Prioritize accounts that already point to this address or have suins
+          const matches = users.filter((mu: any) =>
             mu.email?.toLowerCase() === currentEmail.toLowerCase() &&
             mu.address?.toLowerCase() !== account.address.toLowerCase()
           );
-          if (match && match.address) {
+          const bestMatch = matches.find((mu: any) =>
+            (account.isZk ? mu.linkedZkAddress === account.address : mu.linkedWalletAddress === account.address) ||
+            mu.suins
+          ) || matches[0];
+
+          if (bestMatch && bestMatch.address) {
             if (account.isZk) {
-              foundWallet = match.address;
+              foundWallet = bestMatch.address;
               upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, {
-                linkedWalletAddress: match.address,
+                linkedWalletAddress: bestMatch.address,
               }).catch(console.error);
             } else {
-              foundZk = match.address;
+              foundZk = bestMatch.address;
               upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, {
-                linkedZkAddress: match.address,
+                linkedZkAddress: bestMatch.address,
               }).catch(console.error);
             }
           }

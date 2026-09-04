@@ -1,10 +1,11 @@
 // src/components/BottomNav.tsx
 import { useNavigate, useLocation } from 'react-router-dom';
-import { HomeIcon, SplitIcon, CommunityIcon, FriendsIcon, ProfileIcon } from './Icons';
+import { HomeIcon, SplitIcon, HistoryIcon, CommunityIcon, FriendsIcon, ProfileIcon } from './Icons';
 
 const NAV_ITEMS = [
   { path: '/',          Icon: HomeIcon,      label: 'Home'      },
   { path: '/split',     Icon: SplitIcon,     label: 'Split'     },
+  { path: '/history',   Icon: HistoryIcon,   label: 'History'   },
   { path: '/community', Icon: CommunityIcon, label: 'Community' },
   { path: '/friends',   Icon: FriendsIcon,   label: 'Friends'   },
   { path: '/profile',   Icon: ProfileIcon,   label: 'Profile'   },

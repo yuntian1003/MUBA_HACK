@@ -17,6 +17,7 @@ function shortAddress(addr: string) {
 const NAV_ITEMS = [
   { label: 'Home',      path: '/'          },
   { label: 'Split',     path: '/split'     },
+  { label: 'History',   path: '/history'   },
   { label: 'Community', path: '/community' },
   { label: 'Friends',   path: '/friends'   },
   { label: 'Profile',   path: '/profile'   },

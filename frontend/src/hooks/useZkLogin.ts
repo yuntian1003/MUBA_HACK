@@ -29,32 +29,83 @@ const STORAGE_KEYS = {
   SENT_REQS: 'smartsplit_sent_reqs',
 };
 
+// Global shared state across all components using useZkLogin
+let globalZkAccount: ZkAccount | null = (() => {
+  try {
+    const savedAccount = localStorage.getItem(STORAGE_KEYS.ACCOUNT);
+    const savedJwt = localStorage.getItem(STORAGE_KEYS.JWT);
+    if (savedAccount && savedJwt) {
+      const decoded = parseJwt(savedJwt);
+      if (decoded && (!decoded.exp || decoded.exp * 1000 > Date.now())) {
+        return JSON.parse(savedAccount);
+      }
+    }
+  } catch {}
+  return null;
+})();
+
+let globalJwt: string | null = (() => {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.JWT);
+  } catch {}
+  return null;
+})();
+
+const listeners = new Set<() => void>();
+function emitChange() {
+  listeners.forEach((listener) => listener());
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('smartsplit_zk_change'));
+  }
+}
+
 export function useZkLogin() {
   const client = useCurrentClient();
-  const [zkAccount, setZkAccount] = useState<ZkAccount | null>(null);
-  const [jwt, setJwt] = useState<string | null>(null);
+  const [zkAccount, setZkAccount] = useState<ZkAccount | null>(globalZkAccount);
+  const [jwt, setJwt] = useState<string | null>(globalJwt);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Restore session on mount
+  // Sync with global store & window events
   useEffect(() => {
-    const savedAccount = localStorage.getItem(STORAGE_KEYS.ACCOUNT);
-    const savedJwt = localStorage.getItem(STORAGE_KEYS.JWT);
+    const sync = () => {
+      setZkAccount(globalZkAccount);
+      setJwt(globalJwt);
+    };
+    listeners.add(sync);
 
-    if (savedAccount && savedJwt) {
+    const handleStorageChange = () => {
       try {
-        const decoded = parseJwt(savedJwt);
-        if (decoded && (!decoded.exp || decoded.exp * 1000 > Date.now())) {
-          setZkAccount(JSON.parse(savedAccount));
-          setJwt(savedJwt);
+        const savedAccount = localStorage.getItem(STORAGE_KEYS.ACCOUNT);
+        const savedJwt = localStorage.getItem(STORAGE_KEYS.JWT);
+        if (savedAccount && savedJwt) {
+          const decoded = parseJwt(savedJwt);
+          if (decoded && (!decoded.exp || decoded.exp * 1000 > Date.now())) {
+            globalZkAccount = JSON.parse(savedAccount);
+            globalJwt = savedJwt;
+          } else {
+            globalZkAccount = null;
+            globalJwt = null;
+          }
         } else {
-          // Token expired or invalid
-          logoutZkLogin();
+          globalZkAccount = null;
+          globalJwt = null;
         }
       } catch {
-        logoutZkLogin();
+        globalZkAccount = null;
+        globalJwt = null;
       }
-    }
+      sync();
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('smartsplit_zk_change', handleStorageChange);
+
+    return () => {
+      listeners.delete(sync);
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('smartsplit_zk_change', handleStorageChange);
+    };
   }, []);
 
   async function loginWithGoogle() {
@@ -113,6 +164,9 @@ export function useZkLogin() {
       // Persist active zkLogin session
       localStorage.setItem(STORAGE_KEYS.JWT, idToken);
       localStorage.setItem(STORAGE_KEYS.ACCOUNT, JSON.stringify(account));
+      globalZkAccount = account;
+      globalJwt = idToken;
+      emitChange();
 
       setZkAccount(account);
       setJwt(idToken);
@@ -133,6 +187,9 @@ export function useZkLogin() {
     localStorage.removeItem(STORAGE_KEYS.ACCOUNT);
     localStorage.removeItem(STORAGE_KEYS.INCOMING_REQS);
     localStorage.removeItem(STORAGE_KEYS.SENT_REQS);
+    globalZkAccount = null;
+    globalJwt = null;
+    emitChange();
     setZkAccount(null);
     setJwt(null);
     setError(null);

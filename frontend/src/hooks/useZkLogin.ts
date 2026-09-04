@@ -9,6 +9,7 @@ import {
   clearZkSession,
   fetchZkProof,
   getOrCreateEphemeralKeypair,
+  STORAGE_KEYS as ZK_STORAGE_KEYS,
   type DecodedJwt,
 } from '../zklogin';
 
@@ -82,10 +83,14 @@ export function useZkLogin() {
 
       const salt = getOrCreateUserSalt();
       const address = deriveZkAddress(idToken, salt);
-      const randomness = sessionStorage.getItem('smartsplit_zk_randomness');
-      const maxEpochValue = sessionStorage.getItem('smartsplit_zk_max_epoch');
+      const randomness =
+        sessionStorage.getItem(ZK_STORAGE_KEYS.RANDOMNESS) ||
+        localStorage.getItem(ZK_STORAGE_KEYS.RANDOMNESS);
+      const maxEpochValue =
+        sessionStorage.getItem(ZK_STORAGE_KEYS.MAX_EPOCH) ||
+        localStorage.getItem(ZK_STORAGE_KEYS.MAX_EPOCH);
       if (!randomness || !maxEpochValue) {
-        throw new Error('zkLogin session data is missing. Please start Google sign-in again.');
+        throw new Error('zkLogin session data is missing. Please click Google Sign-In again.');
       }
 
       const proof = await fetchZkProof({
@@ -116,7 +121,7 @@ export function useZkLogin() {
     } catch (err: any) {
       console.error('Failed to complete zkLogin:', err);
       setError(err.message || 'Failed to complete login');
-      return null;
+      throw err;
     } finally {
       setIsLoading(false);
     }

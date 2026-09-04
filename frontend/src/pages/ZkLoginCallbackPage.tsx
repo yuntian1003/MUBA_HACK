@@ -40,8 +40,15 @@ export function ZkLoginCallbackPage() {
           await upsertUser(
             zkAcc.address,
             zkAcc.name || 'Google User',
-            '#9F9DF3'
+            '#9F9DF3',
+            zkAcc.email
           );
+          if (zkAcc.email) {
+            localStorage.setItem(`email-${zkAcc.address}`, zkAcc.email);
+          }
+          if (zkAcc.name) {
+            localStorage.setItem(`nickname-${zkAcc.address}`, zkAcc.name);
+          }
         } catch (dbErr) {
           console.warn('Could not auto-register profile in database:', dbErr);
         }

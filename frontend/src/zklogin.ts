@@ -4,9 +4,10 @@ import {
   generateNonce,
   generateRandomness,
   jwtToAddress,
+  getExtendedEphemeralPublicKey,
 } from '@mysten/sui/zklogin';
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   EPHEMERAL_KEY: 'smartsplit_zk_ephemeral_key',
   RANDOMNESS: 'smartsplit_zk_randomness',
   MAX_EPOCH: 'smartsplit_zk_max_epoch',
@@ -58,7 +59,9 @@ export function parseJwt(jwtToken: string): DecodedJwt | null {
  * Get or create ephemeral Ed25519 keypair for zkLogin session
  */
 export function getOrCreateEphemeralKeypair(): Ed25519Keypair {
-  const existingSecret = sessionStorage.getItem(STORAGE_KEYS.EPHEMERAL_KEY);
+  const existingSecret =
+    sessionStorage.getItem(STORAGE_KEYS.EPHEMERAL_KEY) ||
+    localStorage.getItem(STORAGE_KEYS.EPHEMERAL_KEY);
   if (existingSecret) {
     try {
       const secretBytes = new Uint8Array(JSON.parse(existingSecret));
@@ -70,7 +73,9 @@ export function getOrCreateEphemeralKeypair(): Ed25519Keypair {
 
   const keypair = new Ed25519Keypair();
   const secretKeyBytes = Array.from(keypair.getSecretKey());
-  sessionStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, JSON.stringify(secretKeyBytes));
+  const serialized = JSON.stringify(secretKeyBytes);
+  sessionStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, serialized);
+  localStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, serialized);
   return keypair;
 }
 
@@ -83,6 +88,9 @@ export function clearZkSession() {
   sessionStorage.removeItem(STORAGE_KEYS.MAX_EPOCH);
   sessionStorage.removeItem(STORAGE_KEYS.JWT);
   sessionStorage.removeItem(STORAGE_KEYS.PROOF);
+  localStorage.removeItem(STORAGE_KEYS.EPHEMERAL_KEY);
+  localStorage.removeItem(STORAGE_KEYS.RANDOMNESS);
+  localStorage.removeItem(STORAGE_KEYS.MAX_EPOCH);
 }
 
 /**
@@ -111,7 +119,9 @@ export function prepareGoogleLoginUrl(maxEpoch: number = 2000): string {
   const randomness = generateRandomness();
 
   sessionStorage.setItem(STORAGE_KEYS.RANDOMNESS, randomness);
+  localStorage.setItem(STORAGE_KEYS.RANDOMNESS, randomness);
   sessionStorage.setItem(STORAGE_KEYS.MAX_EPOCH, maxEpoch.toString());
+  localStorage.setItem(STORAGE_KEYS.MAX_EPOCH, maxEpoch.toString());
 
   const nonce = generateNonce(keypair.getPublicKey(), maxEpoch, randomness);
 
@@ -148,7 +158,7 @@ export async function fetchZkProof(params: {
   // Mysten devnet/testnet prover service
   const PROVER_URL = 'https://prover-dev.mystenlabs.com/v1';
 
-  const extendedEphemeralPublicKey = keypair.getPublicKey().toSuiPublicKey();
+  const extendedEphemeralPublicKey = getExtendedEphemeralPublicKey(keypair.getPublicKey());
 
   const response = await fetch(PROVER_URL, {
     method: 'POST',
@@ -158,7 +168,7 @@ export async function fetchZkProof(params: {
       extendedEphemeralPublicKey,
       maxEpoch,
       jwtRandomness,
-      userSalt,
+      salt: userSalt,
       keyClaimName: 'sub',
     }),
   });

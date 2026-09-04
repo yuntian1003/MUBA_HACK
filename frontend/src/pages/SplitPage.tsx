@@ -14,7 +14,7 @@ import {
 import { useSplitTransaction } from '../hooks/useSplitTransaction';
 import { useSuiNSAddress } from '../hooks/useSuiNS';
 import { useZkLogin } from '../hooks/useZkLogin';
-import { fetchUsers, createPaymentRequests, fetchCommunities, fetchFriends } from '../api';
+import { createPaymentRequests, fetchCommunities, fetchFriends } from '../api';
 import { apiUserToMember, apiCommunityToFrontend } from '../types';
 import type { Member, Community } from '../types';
 import { uploadToWalrus, type WalrusUpload } from '../walrus';
@@ -104,17 +104,10 @@ export function SplitPage() {
     return list;
   }, [rawCommunities, locationState?.preselectedCommunity]);
 
-  // ── Fetch users from backend ──────────────────────────────────
-  const { data: rawUsers = [] } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => fetchUsers(),
-    staleTime: 20_000,
-  });
-
   const allMembers = useMemo(() => {
     const map = new Map<string, Member>();
 
-    // 1. User's friends first
+    // 1. User's friends list
     rawFriends.forEach((f: any) => {
       const m = apiUserToMember(f);
       if (!ownerAddress || m.walletAddress.toLowerCase() !== ownerAddress) {
@@ -129,18 +122,8 @@ export function SplitPage() {
       }
     }
 
-    // 3. Other registered backend users
-    rawUsers
-      .filter((u: any) => !ownerAddress || u.address?.toLowerCase() !== ownerAddress)
-      .forEach((u: any) => {
-        const m = apiUserToMember(u);
-        if (!map.has(m.id)) {
-          map.set(m.id, m);
-        }
-      });
-
     return Array.from(map.values());
-  }, [rawFriends, rawUsers, locationState, ownerAddress]);
+  }, [rawFriends, locationState, ownerAddress]);
 
   // Preselect friend if navigated from Friends page
   const [selected, setSelected] = useState<Member[]>(() => {

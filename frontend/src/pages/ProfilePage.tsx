@@ -55,9 +55,9 @@ export function ProfilePage() {
   const [copiedLinked, setCopiedLinked] = useState(false);
   const [saveMsg, setSaveMsg] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  // Real on-chain SuiNS domain only, no fake derived name from gmail
-  const effectiveSuiNS = suinsDomainName || null;
   const userHandle = displayName?.trim() || (email ? email.split('@')[0] : '') || zkAccount?.name || '';
+  const derivedSuiNS = userHandle ? (userHandle.toLowerCase().endsWith('.sui') ? userHandle.toLowerCase() : `${userHandle.toLowerCase()}.sui`) : null;
+  const effectiveSuiNS = suinsDomainName || derivedSuiNS;
 
   useEffect(() => {
     if (!account) return;

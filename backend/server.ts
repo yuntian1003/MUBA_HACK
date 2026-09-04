@@ -207,35 +207,59 @@ app.get('/api/users', async (req, res) => {
 app.get('/api/communities', async (req, res) => {
   try {
     const owner = (req.query.owner as string || '').toLowerCase().trim();
+    let communities: any[] = [];
+
     if (hasFirebaseCredentials) {
-      let query: FirebaseFirestore.Query = db.collection('communities');
-      if (owner) {
-        query = query.where('ownerAddress', '==', owner);
+      try {
+        const commSnap = await db.collection('communities').get();
+        const allComms = await Promise.all(
+          commSnap.docs.map(async (commDoc: any) => {
+            const communityData = commDoc.data();
+            const membersSnap = await db
+              .collection('communities')
+              .doc(commDoc.id)
+              .collection('members')
+              .get();
+            const members = membersSnap.docs.map((mDoc: any) => mDoc.data());
+            return { id: commDoc.id, ...communityData, members };
+          })
+        );
+
+        if (owner) {
+          communities = allComms.filter((c: any) =>
+            (c.ownerAddress || '').toLowerCase() === owner ||
+            (Array.isArray(c.memberAddresses) && c.memberAddresses.includes(owner)) ||
+            (Array.isArray(c.members) && c.members.some((m: any) => (m.walletAddress || m.address || '').toLowerCase() === owner))
+          );
+        } else {
+          communities = allComms;
+        }
+      } catch (fbErr) {
+        console.warn('Firebase error fetching communities, falling back to memory:', fbErr);
+        communities = Array.from(memoryCommunities.values());
+        if (owner) {
+          communities = communities.filter((c: any) =>
+            (c.ownerAddress || '').toLowerCase() === owner ||
+            (Array.isArray(c.memberAddresses) && c.memberAddresses.includes(owner)) ||
+            (Array.isArray(c.members) && c.members.some((m: any) => (m.walletAddress || m.address || '').toLowerCase() === owner))
+          );
+        }
       }
-      const commSnap = await query.get();
-      const communities = await Promise.all(
-        commSnap.docs.map(async (commDoc: any) => {
-          const communityData = commDoc.data();
-          const membersSnap = await db
-            .collection('communities')
-            .doc(commDoc.id)
-            .collection('members')
-            .get();
-          const members = membersSnap.docs.map((mDoc: any) => mDoc.data());
-          return { id: commDoc.id, ...communityData, members };
-        })
-      );
-      res.json(communities);
     } else {
-      let communities = Array.from(memoryCommunities.values());
+      communities = Array.from(memoryCommunities.values());
       if (owner) {
-        communities = communities.filter((c: any) => c.ownerAddress === owner);
+        communities = communities.filter((c: any) =>
+          (c.ownerAddress || '').toLowerCase() === owner ||
+          (Array.isArray(c.memberAddresses) && c.memberAddresses.includes(owner)) ||
+          (Array.isArray(c.members) && c.members.some((m: any) => (m.walletAddress || m.address || '').toLowerCase() === owner))
+        );
       }
-      res.json(communities);
     }
+
+    res.json(communities);
   } catch (e) {
     console.error('Error fetching communities:', e);
-    res.status(500).json({ error: 'Failed to fetch communities' });
+    res.json(Array.from(memoryCommunities.values()));
   }
 });
 
@@ -269,22 +293,29 @@ app.post('/api/communities', async (req, res) => {
       description: description || '',
       lastActivity,
       ownerAddress: owner,
+      memberAddresses: members.map((m) => (m.walletAddress || '').toLowerCase()),
       members,
     };
 
-    if (hasFirebaseCredentials) {
-      await db.collection('communities').doc(id).set({
-        name,
-        description: description || '',
-        lastActivity,
-        ownerAddress: owner,
-      });
+    memoryCommunities.set(id, commData);
 
-      for (const m of members) {
-        await db.collection('communities').doc(id).collection('members').doc(m.walletAddress).set(m);
+    if (hasFirebaseCredentials) {
+      try {
+        await db.collection('communities').doc(id).set({
+          name,
+          description: description || '',
+          lastActivity,
+          ownerAddress: owner,
+          memberAddresses: members.map((m) => (m.walletAddress || '').toLowerCase()),
+        });
+
+        for (const m of members) {
+          const docId = (m.walletAddress || `mem_${Math.random()}`).replace(/\//g, '_');
+          await db.collection('communities').doc(id).collection('members').doc(docId).set(m);
+        }
+      } catch (fbErr) {
+        console.warn('Firebase failed to save community, saved to memory fallback:', fbErr);
       }
-    } else {
-      memoryCommunities.set(id, commData);
     }
 
     res.json(commData);

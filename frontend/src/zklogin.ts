@@ -163,18 +163,31 @@ export async function fetchZkProof(params: {
 
   const extendedEphemeralPublicKey = getExtendedEphemeralPublicKey(keypair.getPublicKey());
 
-  const response = await fetch(PROVER_URL, {
+  const payload = {
+    jwt,
+    extendedEphemeralPublicKey,
+    maxEpoch,
+    jwtRandomness,
+    salt: userSalt,
+    keyClaimName: 'sub',
+  };
+
+  let response = await fetch(PROVER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jwt,
-      extendedEphemeralPublicKey,
-      maxEpoch,
-      jwtRandomness,
-      salt: userSalt,
-      keyClaimName: 'sub',
-    }),
+    body: JSON.stringify(payload),
   });
+
+  // Mysten prover rate-limits identical JWT submissions within 5s; back off and retry once
+  if (response.status === 429) {
+    console.warn('Prover rate-limited (429), waiting 5.2s before retrying…');
+    await new Promise((resolve) => setTimeout(resolve, 5200));
+    response = await fetch(PROVER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
 
   if (!response.ok) {
     const errText = await response.text();

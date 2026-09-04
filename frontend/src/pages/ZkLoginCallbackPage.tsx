@@ -1,5 +1,5 @@
 // src/pages/ZkLoginCallbackPage.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useZkLogin } from '../hooks/useZkLogin';
@@ -10,8 +10,12 @@ export function ZkLoginCallbackPage() {
   const { completeZkLogin } = useZkLogin();
   const [status, setStatus] = useState<string>('Verifying Google sign-in…');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const hasTriggered = useRef(false);
 
   useEffect(() => {
+    if (hasTriggered.current) return;
+    hasTriggered.current = true;
+
     async function handleAuthCallback() {
       try {
         // Extract id_token from URL hash: #id_token=xxx&token_type=Bearer...

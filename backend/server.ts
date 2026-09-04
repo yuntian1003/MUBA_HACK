@@ -197,7 +197,7 @@ app.get('/api/users/:address', async (req, res) => {
 // Create or update a user profile (symmetrical linking & auto-discovery by email)
 app.post('/api/users', async (req, res) => {
   try {
-    let { address, nickname, avatarColor, email, linkedZkAddress, linkedWalletAddress } = req.body;
+    let { address, nickname, avatarColor, email, linkedZkAddress, linkedWalletAddress, suins } = req.body;
     if (!address && !email) return res.status(400).json({ error: 'Address or email required' });
 
     if (!address && email) {
@@ -215,6 +215,9 @@ app.post('/api/users', async (req, res) => {
       email: finalEmail,
     };
 
+    if (suins) {
+      userData.suins = suins.trim();
+    }
     if (linkedZkAddress) {
       userData.linkedZkAddress = linkedZkAddress.toLowerCase().trim();
     }
@@ -234,6 +237,9 @@ app.post('/api/users', async (req, res) => {
               if (!userData.linkedZkAddress) {
                 userData.linkedZkAddress = dAddr;
               }
+              if (data.suins && !userData.suins) {
+                userData.suins = data.suins;
+              }
             }
           }
         } catch (e) {}
@@ -244,6 +250,9 @@ app.post('/api/users', async (req, res) => {
           if (uEmail === finalEmail && uAddr && uAddr !== normAddress) {
             if (!userData.linkedZkAddress) {
               userData.linkedZkAddress = uAddr;
+            }
+            if (u.suins && !userData.suins) {
+              userData.suins = u.suins;
             }
           }
         }
@@ -262,6 +271,7 @@ app.post('/api/users', async (req, res) => {
           nickname: userData.nickname,
           avatarColor: userData.avatarColor,
           email: finalEmail,
+          ...(userData.suins ? { suins: userData.suins } : {}),
         }, { merge: true });
       }
 
@@ -274,6 +284,7 @@ app.post('/api/users', async (req, res) => {
           nickname: userData.nickname,
           avatarColor: userData.avatarColor,
           email: finalEmail,
+          ...(userData.suins ? { suins: userData.suins } : {}),
         }, { merge: true });
       }
     } else {
@@ -290,6 +301,7 @@ app.post('/api/users', async (req, res) => {
           nickname: userData.nickname,
           avatarColor: userData.avatarColor,
           email: finalEmail,
+          ...(userData.suins ? { suins: userData.suins } : {}),
         });
       }
 
@@ -303,6 +315,7 @@ app.post('/api/users', async (req, res) => {
           nickname: userData.nickname,
           avatarColor: userData.avatarColor,
           email: finalEmail,
+          ...(userData.suins ? { suins: userData.suins } : {}),
         });
       }
     }

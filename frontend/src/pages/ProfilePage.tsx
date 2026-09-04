@@ -37,20 +37,27 @@ export function ProfilePage() {
     : null;
 
   const queryClient = useQueryClient();
-  const { data: suinsDomainName } = useSuiNSName(account?.address);
+  const [linkedZkAddress, setLinkedZkAddress] = useState<string>(() => {
+    return localStorage.getItem('linkedZkAddress') || '';
+  });
+  const [linkedWalletAddress, setLinkedWalletAddress] = useState<string>(() => {
+    return localStorage.getItem('linkedWalletAddress') || '';
+  });
+
+  const effectiveWalletAddr = account?.isZk ? (linkedWalletAddress || walletAccount?.address) : account?.address;
+  const { data: suinsDomainName } = useSuiNSName(effectiveWalletAddr, account?.address);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
-  const [linkedZkAddress, setLinkedZkAddress] = useState('');
   const [editing, setEditing] = useState(false);
   const [attemptedSaveName, setAttemptedSaveName] = useState(false);
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
   const [copied, setCopied] = useState(false);
-  const [copiedZk, setCopiedZk] = useState(false);
+  const [copiedLinked, setCopiedLinked] = useState(false);
   const [saveMsg, setSaveMsg] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
+  // Real on-chain SuiNS domain only, no fake derived name from gmail
+  const effectiveSuiNS = suinsDomainName || null;
   const userHandle = displayName?.trim() || (email ? email.split('@')[0] : '') || zkAccount?.name || '';
-  const derivedSuiNS = userHandle ? (userHandle.toLowerCase().endsWith('.sui') ? userHandle.toLowerCase() : `${userHandle.toLowerCase()}.sui`) : null;
-  const effectiveSuiNS = suinsDomainName || derivedSuiNS;
 
   useEffect(() => {
     if (!account) return;
@@ -70,6 +77,7 @@ export function ProfilePage() {
     fetchUser(account.address).then(async (u) => {
       let currentEmail = initialEmail;
       let foundZk = '';
+      let foundWallet = '';
 
       if (u) {
         if (u.nickname) setDisplayName(u.nickname);
@@ -82,10 +90,11 @@ export function ProfilePage() {
 
         if (u.avatarColor) setSelectedColor(u.avatarColor);
         if (u.linkedZkAddress) foundZk = u.linkedZkAddress;
+        if (u.linkedWalletAddress) foundWallet = u.linkedWalletAddress;
       }
 
-      // Auto-link if same email has a zkLogin account
-      if (!foundZk && currentEmail) {
+      // Auto-link if same email has a linked account
+      if ((!foundZk || !foundWallet) && currentEmail) {
         try {
           const users = await fetchUsers(currentEmail);
           const match = users.find((mu: any) =>
@@ -93,19 +102,31 @@ export function ProfilePage() {
             mu.address?.toLowerCase() !== account.address.toLowerCase()
           );
           if (match && match.address) {
-            foundZk = match.address;
-            upsertUser(account.address, displayName || initialName || 'Friend', AVATAR_COLORS[0], currentEmail, {
-              linkedZkAddress: match.address,
-            }).catch(console.error);
+            if (account.isZk) {
+              foundWallet = match.address;
+              upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, {
+                linkedWalletAddress: match.address,
+              }).catch(console.error);
+            } else {
+              foundZk = match.address;
+              upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, {
+                linkedZkAddress: match.address,
+              }).catch(console.error);
+            }
           }
         } catch (e) {
           console.warn('Auto-link error:', e);
         }
       }
 
-      setLinkedZkAddress(foundZk || zkAccount?.address || '');
+      const finalZk = foundZk || zkAccount?.address || '';
+      const finalWallet = foundWallet || walletAccount?.address || '';
+      setLinkedZkAddress(finalZk);
+      setLinkedWalletAddress(finalWallet);
+      if (finalWallet) localStorage.setItem('linkedWalletAddress', finalWallet);
+      if (finalZk) localStorage.setItem('linkedZkAddress', finalZk);
     }).catch(console.error);
-  }, [account?.address, zkAccount]);
+  }, [account?.address, zkAccount, walletAccount?.address]);
 
   async function handleSave() {
     setAttemptedSaveName(true);
@@ -113,14 +134,18 @@ export function ProfilePage() {
     if (!account) { setEditing(false); return; }
     setSaveMsg('saving');
     try {
-      // Save to localStorage for instant offline reads
       localStorage.setItem(`nickname-${account.address}`, displayName.trim());
       if (email.trim()) localStorage.setItem(`email-${account.address}`, email.trim());
-      // Sync to backend so others can see the user in Friends/Communities
+      
+      const finalZk = account.isZk ? undefined : (zkAccount?.address || linkedZkAddress);
+      const finalWallet = account.isZk ? (walletAccount?.address || linkedWalletAddress) : undefined;
       await upsertUser(account.address, displayName.trim(), selectedColor, email.trim(), {
-        linkedZkAddress: account.isZk ? undefined : (zkAccount?.address || linkedZkAddress),
-        linkedWalletAddress: account.isZk ? (walletAccount?.address || undefined) : undefined,
+        linkedZkAddress: finalZk,
+        linkedWalletAddress: finalWallet,
       });
+      if (finalWallet) localStorage.setItem('linkedWalletAddress', finalWallet);
+      if (finalZk) localStorage.setItem('linkedZkAddress', finalZk);
+
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['friends'] });
       queryClient.invalidateQueries({ queryKey: ['my-profile'] });
@@ -362,7 +387,7 @@ export function ProfilePage() {
               </div>
             ) : (
               <div style={{ textAlign: 'center' }}>
-                <h3 style={{ marginBottom: 4 }}>{displayName || zkAccount?.name || userHandle || 'Anonymous'}</h3>
+                <h3 style={{ marginBottom: 4 }}>{effectiveSuiNS || displayName || zkAccount?.name || userHandle || 'Anonymous'}</h3>
                 {effectiveSuiNS && (
                   <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
                     <span
@@ -418,7 +443,7 @@ export function ProfilePage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="flex items-center justify-between">
               <span className="text-sm color-text3 font-medium">
-                {walletAccount ? 'Sui Wallet Address (Connected)' : 'zkLogin Address (Connected)'}
+                {account.isZk ? 'zkLogin Address (Connected)' : 'Sui Wallet Address (Connected)'}
               </span>
               <span
                 className="badge badge-green"
@@ -475,63 +500,54 @@ export function ProfilePage() {
               )}
             </div>
 
-            {/* ── Linked Google zkLogin Identity Card ──────────────── */}
-            <div
-              style={{
-                marginTop: 4,
-                padding: '14px 16px',
-                borderRadius: 16,
-                background: (zkAccount?.address || linkedZkAddress) ? 'rgba(159, 157, 243, 0.08)' : 'rgba(0, 0, 0, 0.02)',
-                border: (zkAccount?.address || linkedZkAddress) ? '1.5px solid rgba(159, 157, 243, 0.25)' : '1px dashed var(--border)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-              }}
-            >
-              <div className="flex items-center justify-between">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <GoogleLogo size={17} />
-                  <span style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--deep)' }}>
-                    Google zkLogin Identity
-                  </span>
-                </div>
-                {(zkAccount?.address || linkedZkAddress) ? (
-                  <span
-                    className="badge badge-green"
-                    style={{ fontSize: '0.74rem', padding: '3px 8px', fontWeight: 700 }}
-                  >
-                    🔗 Linked
-                  </span>
-                ) : (
-                  <span
-                    className="badge"
-                    style={{ fontSize: '0.74rem', padding: '3px 8px', background: 'rgba(0,0,0,0.06)', color: 'var(--text-3)' }}
-                  >
-                    Not linked
-                  </span>
-                )}
-              </div>
-
-              {(zkAccount?.address || linkedZkAddress) ? (
-                <>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span className="text-xs color-text3">Google Account</span>
-                    <span style={{ fontSize: '0.86rem', fontWeight: 600, color: 'var(--deep)' }}>
-                      {email || zkAccount?.email} {displayName ? `(${displayName})` : ''}
+            {/* ── Linked Identity Card (Swaps depending on whether logged in via zkLogin or Wallet) ── */}
+            {account.isZk ? (
+              /* When in zkLogin mode: show Linked Sui Wallet (Slush Wallet) */
+              <div
+                style={{
+                  marginTop: 4,
+                  padding: '14px 16px',
+                  borderRadius: 16,
+                  background: linkedWalletAddress ? 'rgba(201, 235, 202, 0.25)' : 'rgba(0, 0, 0, 0.02)',
+                  border: linkedWalletAddress ? '1.5px solid rgba(58, 122, 60, 0.3)' : '1px dashed var(--border)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <WalletIcon size={17} color="var(--deep)" />
+                    <span style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--deep)' }}>
+                      Sui Wallet (Slush Wallet)
                     </span>
                   </div>
+                  {linkedWalletAddress ? (
+                    <span
+                      className="badge badge-green"
+                      style={{ fontSize: '0.74rem', padding: '3px 8px', fontWeight: 700 }}
+                    >
+                      🔗 Linked
+                    </span>
+                  ) : (
+                    <span
+                      className="badge"
+                      style={{ fontSize: '0.74rem', padding: '3px 8px', background: 'rgba(0,0,0,0.06)', color: 'var(--text-3)' }}
+                    >
+                      Not linked
+                    </span>
+                  )}
+                </div>
 
+                {linkedWalletAddress ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span className="text-xs color-text3">zkLogin On-Chain Address</span>
+                    <span className="text-xs color-text3">Slush Wallet On-Chain Address</span>
                     <button
                       type="button"
                       onClick={async () => {
-                        const targetAddr = zkAccount?.address || linkedZkAddress;
-                        if (targetAddr) {
-                          await navigator.clipboard.writeText(targetAddr);
-                          setCopiedZk(true);
-                          setTimeout(() => setCopiedZk(false), 2000);
-                        }
+                        await navigator.clipboard.writeText(linkedWalletAddress);
+                        setCopiedLinked(true);
+                        setTimeout(() => setCopiedLinked(false), 2000);
                       }}
                       style={{
                         background: 'rgba(255, 255, 255, 0.85)',
@@ -542,7 +558,7 @@ export function ProfilePage() {
                         color: 'var(--deep)',
                         wordBreak: 'break-all',
                         cursor: 'pointer',
-                        border: '1px solid rgba(159, 157, 243, 0.2)',
+                        border: '1.5px solid rgba(58, 122, 60, 0.25)',
                         width: '100%',
                         textAlign: 'left',
                         display: 'flex',
@@ -550,44 +566,138 @@ export function ProfilePage() {
                         gap: 6,
                       }}
                     >
-                      <span style={{ flex: 1 }}>{zkAccount?.address || linkedZkAddress}</span>
-                      {copiedZk
+                      <span style={{ flex: 1 }}>{linkedWalletAddress}</span>
+                      {copiedLinked
                         ? <CheckCircleIcon size={14} color="#3a7a3c" strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
                         : <CopyIcon size={14} color="var(--text-3)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />}
                     </button>
                   </div>
-                </>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <p className="text-xs color-text3" style={{ margin: 0, lineHeight: 1.4 }}>
-                    Link your Google account so your Gmail is tied to this wallet. Friends will be able to find and split expenses with you by email.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => loginWithGoogle()}
-                    disabled={isZkLoading}
-                    className="btn btn-sm"
-                    style={{
-                      background: 'white',
-                      border: '1.5px solid var(--border)',
-                      color: 'var(--deep)',
-                      fontWeight: 700,
-                      alignSelf: 'flex-start',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      padding: '6px 14px',
-                      borderRadius: 12,
-                      boxShadow: 'var(--shadow-sm)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <GoogleLogo size={14} />
-                    {isZkLoading ? 'Connecting Google…' : 'Link with Google'}
-                  </button>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <p className="text-xs color-text3" style={{ margin: 0, lineHeight: 1.4 }}>
+                      Connect your Slush wallet while signed in to link them. Your SuiNS domain and on-chain contacts will be shared across both logins.
+                    </p>
+                    <div style={{ alignSelf: 'flex-start' }}>
+                      <ConnectButton />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* When in Wallet mode: show Linked Google zkLogin Identity */
+              <div
+                style={{
+                  marginTop: 4,
+                  padding: '14px 16px',
+                  borderRadius: 16,
+                  background: (zkAccount?.address || linkedZkAddress) ? 'rgba(159, 157, 243, 0.08)' : 'rgba(0, 0, 0, 0.02)',
+                  border: (zkAccount?.address || linkedZkAddress) ? '1.5px solid rgba(159, 157, 243, 0.25)' : '1px dashed var(--border)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <GoogleLogo size={17} />
+                    <span style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--deep)' }}>
+                      Google zkLogin Identity
+                    </span>
+                  </div>
+                  {(zkAccount?.address || linkedZkAddress) ? (
+                    <span
+                      className="badge badge-green"
+                      style={{ fontSize: '0.74rem', padding: '3px 8px', fontWeight: 700 }}
+                    >
+                      🔗 Linked
+                    </span>
+                  ) : (
+                    <span
+                      className="badge"
+                      style={{ fontSize: '0.74rem', padding: '3px 8px', background: 'rgba(0,0,0,0.06)', color: 'var(--text-3)' }}
+                    >
+                      Not linked
+                    </span>
+                  )}
                 </div>
-              )}
-            </div>
+
+                {(zkAccount?.address || linkedZkAddress) ? (
+                  <>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span className="text-xs color-text3">Google Account</span>
+                      <span style={{ fontSize: '0.86rem', fontWeight: 600, color: 'var(--deep)' }}>
+                        {email || zkAccount?.email} {displayName ? `(${displayName})` : ''}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <span className="text-xs color-text3">zkLogin On-Chain Address</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const targetAddr = zkAccount?.address || linkedZkAddress;
+                          if (targetAddr) {
+                            await navigator.clipboard.writeText(targetAddr);
+                            setCopiedLinked(true);
+                            setTimeout(() => setCopiedLinked(false), 2000);
+                          }
+                        }}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.85)',
+                          borderRadius: 10,
+                          padding: '8px 12px',
+                          fontFamily: 'monospace',
+                          fontSize: '0.78rem',
+                          color: 'var(--deep)',
+                          wordBreak: 'break-all',
+                          cursor: 'pointer',
+                          border: '1px solid rgba(159, 157, 243, 0.2)',
+                          width: '100%',
+                          textAlign: 'left',
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 6,
+                        }}
+                      >
+                        <span style={{ flex: 1 }}>{zkAccount?.address || linkedZkAddress}</span>
+                        {copiedLinked
+                          ? <CheckCircleIcon size={14} color="#3a7a3c" strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
+                          : <CopyIcon size={14} color="var(--text-3)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <p className="text-xs color-text3" style={{ margin: 0, lineHeight: 1.4 }}>
+                      Link your Google account so your Gmail is tied to this wallet. Friends will be able to find and split expenses with you by email.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => loginWithGoogle()}
+                      disabled={isZkLoading}
+                      className="btn btn-sm"
+                      style={{
+                        background: 'white',
+                        border: '1.5px solid var(--border)',
+                        color: 'var(--deep)',
+                        fontWeight: 700,
+                        alignSelf: 'flex-start',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '6px 14px',
+                        borderRadius: 12,
+                        boxShadow: 'var(--shadow-sm)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <GoogleLogo size={14} />
+                      {isZkLoading ? 'Connecting Google…' : 'Link with Google'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center justify-between" style={{ marginTop: 2 }}>
               <span className="text-sm color-text3 font-medium">Network</span>

@@ -50,7 +50,9 @@ export function Header() {
     ? { address: zkAccount.address, name: zkAccount.name, picture: zkAccount.picture, isZk: true }
     : null;
 
-  const { data: suinsName } = useSuiNSName(activeAccount?.address);
+  const linkedWalletAddr = localStorage.getItem('linkedWalletAddress') || '';
+  const primaryWalletAddr = activeAccount?.isZk ? (linkedWalletAddr || walletAccount?.address) : activeAccount?.address;
+  const { data: suinsName } = useSuiNSName(primaryWalletAddr, activeAccount?.address);
   const [localNickname, setLocalNickname] = useState<string>('');
 
   useEffect(() => {
@@ -73,8 +75,9 @@ export function Header() {
   }, [location.pathname]);
 
   const displayUsername =
+    suinsName ||
     localNickname.trim() ||
-    (activeAccount?.isZk ? activeAccount.name : (suinsName || zkAccount?.name || activeAccount?.label)) ||
+    (activeAccount?.isZk ? activeAccount.name : activeAccount?.label) ||
     (activeAccount ? shortAddress(activeAccount.address) : '');
 
   return (
@@ -311,9 +314,20 @@ export function Header() {
                         <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--deep)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {displayUsername}
                         </div>
-                        <div className="text-xs color-text3" style={{ fontFamily: 'monospace' }}>
-                          {shortAddress(activeAccount.address)}
-                        </div>
+                        {activeAccount.isZk && linkedWalletAddr ? (
+                          <>
+                            <div className="text-xs color-text3" style={{ fontFamily: 'monospace' }}>
+                              Wallet: {shortAddress(linkedWalletAddr)}
+                            </div>
+                            <div className="text-xs color-text3" style={{ fontFamily: 'monospace', fontSize: '0.7rem' }}>
+                              zkLogin: {shortAddress(activeAccount.address)}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-xs color-text3" style={{ fontFamily: 'monospace' }}>
+                            {shortAddress(activeAccount.address)}
+                          </div>
+                        )}
                       </div>
                     </div>
 

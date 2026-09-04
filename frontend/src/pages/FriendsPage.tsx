@@ -74,7 +74,9 @@ function FriendsPageInner() {
   const myName = myProfile?.nickname || zkAccount?.name || (ownerAddress ? `${ownerAddress.slice(0, 6)}…` : 'Friend');
   const myAvatarColor = myProfile?.avatarColor || AVATAR_COLORS[0];
 
-  const { data: mySuiNSName } = useSuiNSName(ownerAddress);
+  const linkedWalletAddr = (ownerAddress ? localStorage.getItem('linkedWalletAddress') : '') || myProfile?.linkedWalletAddress || '';
+  const effectiveWalletForSuiNS = (account ? account.address : linkedWalletAddr) || ownerAddress;
+  const { data: mySuiNSName } = useSuiNSName(effectiveWalletForSuiNS, ownerAddress);
 
   // ── Fetch Friend Requests from Backend ──────────────────────
   const { data: requestsData } = useQuery({

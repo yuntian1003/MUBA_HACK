@@ -448,21 +448,47 @@ app.post('/api/payment-requests', async (req, res) => {
 
 app.get('/api/payment-requests', async (req, res) => {
   try {
-    const address = (req.query.address as string || '').toLowerCase().trim();
+    const queryAddr = (req.query.address as string || '').toLowerCase().trim();
     const all = hasFirebaseCredentials
       ? (await db.collection('payment_requests').get()).docs.map((d: any) => d.data())
       : Array.from(memoryPaymentRequests.values());
 
-    if (!address) {
+    if (!queryAddr) {
       return res.json({ incoming: all, outgoing: [] });
     }
 
+    // Collect all equivalent addresses/identities for this user
+    const validAddresses = new Set<string>([queryAddr]);
+
+    let userDoc: any = null;
+    if (hasFirebaseCredentials) {
+      try {
+        const doc = await db.collection('users').doc(queryAddr).get();
+        if (doc.exists) userDoc = doc.data();
+      } catch (e) {}
+    } else {
+      userDoc = memoryUsers.get(queryAddr);
+    }
+
+    if (userDoc) {
+      if (userDoc.address) validAddresses.add(userDoc.address.toLowerCase().trim());
+      if (userDoc.linkedZkAddress) validAddresses.add(userDoc.linkedZkAddress.toLowerCase().trim());
+      if (userDoc.linkedWalletAddress) validAddresses.add(userDoc.linkedWalletAddress.toLowerCase().trim());
+      if (userDoc.email) validAddresses.add(userDoc.email.toLowerCase().trim());
+    }
+
     const incoming = all
-      .filter((r: any) => r.payerAddress?.toLowerCase() === address && r.status === 'pending')
+      .filter((r: any) => {
+        const payer = (r.payerAddress || '').toLowerCase().trim();
+        return validAddresses.has(payer) && r.status === 'pending';
+      })
       .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
 
     const outgoing = all
-      .filter((r: any) => r.requesterAddress?.toLowerCase() === address)
+      .filter((r: any) => {
+        const requester = (r.requesterAddress || '').toLowerCase().trim();
+        return validAddresses.has(requester);
+      })
       .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
 
     res.json({ incoming, outgoing });

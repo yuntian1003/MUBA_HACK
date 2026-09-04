@@ -1,7 +1,6 @@
-// src/api.ts
 // Central service layer for all backend API calls
-// Vite proxies /api/* → http://localhost:3000/api/* to avoid CORS issues
-const BASE_URL = '/api';
+const BACKEND_HOST = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '' : 'https://smartsplit-backend-g1zf.onrender.com');
+const BASE_URL = `${BACKEND_HOST.replace(/\/$/, '')}/api`;
 
 export async function fetchUsers(search = ''): Promise<any[]> {
   const res = await fetch(`${BASE_URL}/users?q=${encodeURIComponent(search)}`);

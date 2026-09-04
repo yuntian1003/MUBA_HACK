@@ -1,4 +1,5 @@
 // src/components/Header.tsx
+import { useState, useEffect } from 'react';
 import { useCurrentAccount, useDAppKit } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -7,6 +8,7 @@ import { Logo } from './Logo';
 import { Avatar } from './Avatar';
 import { LogoutIcon } from './Icons';
 import { useZkLogin } from '../hooks/useZkLogin';
+import { useSuiNSName } from '../hooks/useSuiNS';
 
 function shortAddress(addr: string) {
   return addr.slice(0, 6) + '…' + addr.slice(-4);
@@ -35,10 +37,33 @@ export function Header() {
   }
 
   const activeAccount = walletAccount
-    ? { address: walletAccount.address, isZk: false }
+    ? { address: walletAccount.address, label: walletAccount.label, isZk: false }
     : zkAccount
     ? { address: zkAccount.address, name: zkAccount.name, picture: zkAccount.picture, isZk: true }
     : null;
+
+  const { data: suinsName } = useSuiNSName(activeAccount?.address);
+  const [localNickname, setLocalNickname] = useState<string>('');
+
+  useEffect(() => {
+    if (!activeAccount?.address) {
+      setLocalNickname('');
+      return;
+    }
+    const updateName = () => {
+      const saved = localStorage.getItem(`nickname-${activeAccount.address}`);
+      setLocalNickname(saved || '');
+    };
+    updateName();
+    window.addEventListener('storage', updateName);
+    return () => window.removeEventListener('storage', updateName);
+  }, [activeAccount?.address]);
+
+  // Display username prioritizing custom nickname, Google/wallet name, or SuiNS
+  const displayUsername =
+    localNickname.trim() ||
+    (activeAccount?.isZk ? activeAccount.name : (suinsName || activeAccount?.label)) ||
+    (activeAccount ? shortAddress(activeAccount.address) : '');
 
   return (
     <header className="header">
@@ -83,9 +108,19 @@ export function Header() {
                     style={{ width: 24, height: 24, fontSize: '0.6rem' }}
                   />
                 )}
-                <span className="wallet-dot" style={{ background: activeAccount.isZk ? '#4285F4' : undefined }} />
-                <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--deep)' }}>
-                  {activeAccount.isZk ? `G: ${shortAddress(activeAccount.address)}` : shortAddress(activeAccount.address)}
+                <span
+                  style={{
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    color: 'var(--deep)',
+                    maxWidth: 140,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={activeAccount.address}
+                >
+                  {displayUsername}
                 </span>
               </div>
               <button

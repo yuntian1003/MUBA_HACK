@@ -11,7 +11,7 @@ import {
   LinkIcon, EmptyBoxIcon, EmailIcon,
 } from '../components/Icons';
 import { AVATAR_COLORS } from '../constants';
-import { upsertUser, fetchUser, fetchUsers } from '../api';
+import { upsertUser, fetchUser } from '../api';
 import { useSuiNSName } from '../hooks/useSuiNS';
 import { useZkLogin } from '../hooks/useZkLogin';
 
@@ -44,7 +44,7 @@ export function ProfilePage() {
     return localStorage.getItem('linkedWalletAddress') || '';
   });
 
-  const effectiveWalletAddr = account?.isZk ? (linkedWalletAddress || walletAccount?.address) : account?.address;
+  const effectiveWalletAddr = walletAccount?.address || (account?.isZk ? linkedWalletAddress : account?.address);
   const { data: suinsDomainName } = useSuiNSName(effectiveWalletAddr, account?.address);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -76,8 +76,6 @@ export function ProfilePage() {
     // Sync from backend
     fetchUser(account.address).then(async (u) => {
       let currentEmail = initialEmail;
-      let foundZk = '';
-      let foundWallet = '';
 
       if (u) {
         if (u.nickname) setDisplayName(u.nickname);
@@ -89,49 +87,28 @@ export function ProfilePage() {
         } else if (initialEmail) setEmail(initialEmail);
 
         if (u.avatarColor) setSelectedColor(u.avatarColor);
-        if (u.linkedZkAddress) foundZk = u.linkedZkAddress;
-        if (u.linkedWalletAddress) foundWallet = u.linkedWalletAddress;
       }
 
-      // Auto-link if needed and not already set
-      const needsLink = account.isZk ? !foundWallet : !foundZk;
-      if (needsLink && currentEmail) {
-        try {
-          const users = await fetchUsers(currentEmail);
-          // Prioritize accounts that already point to this address or have suins
-          const matches = users.filter((mu: any) =>
-            mu.email?.toLowerCase() === currentEmail.toLowerCase() &&
-            mu.address?.toLowerCase() !== account.address.toLowerCase()
-          );
-          const bestMatch = matches.find((mu: any) =>
-            (account.isZk ? mu.linkedZkAddress === account.address : mu.linkedWalletAddress === account.address) ||
-            mu.suins
-          ) || matches[0];
+      const activeWallet = walletAccount?.address || '';
+      const realZk = zkAccount?.address || u?.linkedZkAddress || localStorage.getItem('linkedZkAddress') || '';
+      const realWallet = activeWallet || u?.linkedWalletAddress || localStorage.getItem('linkedWalletAddress') || '';
 
-          if (bestMatch && bestMatch.address) {
-            if (account.isZk) {
-              foundWallet = bestMatch.address;
-              upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, {
-                linkedWalletAddress: bestMatch.address,
-              }).catch(console.error);
-            } else {
-              foundZk = bestMatch.address;
-              upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, {
-                linkedZkAddress: bestMatch.address,
-              }).catch(console.error);
-            }
-          }
-        } catch (e) {
-          console.warn('Auto-link error:', e);
-        }
+      if (activeWallet) {
+        localStorage.setItem('linkedWalletAddress', activeWallet);
       }
 
-      const finalZk = foundZk || zkAccount?.address || '';
-      const finalWallet = foundWallet || walletAccount?.address || '';
-      setLinkedZkAddress(finalZk);
-      setLinkedWalletAddress(finalWallet);
-      if (finalWallet) localStorage.setItem('linkedWalletAddress', finalWallet);
-      if (finalZk) localStorage.setItem('linkedZkAddress', finalZk);
+      setLinkedZkAddress(realZk);
+      setLinkedWalletAddress(activeWallet || realWallet);
+
+      if (realZk) localStorage.setItem('linkedZkAddress', realZk);
+
+      // Save real connected addresses to backend profile
+      if (account.address) {
+        upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, {
+          linkedWalletAddress: (activeWallet || realWallet) || undefined,
+          linkedZkAddress: realZk || undefined,
+        }).catch(console.error);
+      }
     }).catch(console.error);
   }, [account?.address, zkAccount, walletAccount?.address]);
 
@@ -515,8 +492,8 @@ export function ProfilePage() {
                   marginTop: 4,
                   padding: '14px 16px',
                   borderRadius: 16,
-                  background: linkedWalletAddress ? 'rgba(201, 235, 202, 0.25)' : 'rgba(0, 0, 0, 0.02)',
-                  border: linkedWalletAddress ? '1.5px solid rgba(58, 122, 60, 0.3)' : '1px dashed var(--border)',
+                  background: (walletAccount?.address || linkedWalletAddress) ? 'rgba(201, 235, 202, 0.25)' : 'rgba(0, 0, 0, 0.02)',
+                  border: (walletAccount?.address || linkedWalletAddress) ? '1.5px solid rgba(58, 122, 60, 0.3)' : '1px dashed var(--border)',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 10,
@@ -529,7 +506,7 @@ export function ProfilePage() {
                       Sui Wallet (Slush Wallet)
                     </span>
                   </div>
-                  {linkedWalletAddress ? (
+                  {(walletAccount?.address || linkedWalletAddress) ? (
                     <span
                       className="badge badge-green"
                       style={{ fontSize: '0.74rem', padding: '3px 8px', fontWeight: 700 }}
@@ -546,13 +523,14 @@ export function ProfilePage() {
                   )}
                 </div>
 
-                {linkedWalletAddress ? (
+                {(walletAccount?.address || linkedWalletAddress) ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <span className="text-xs color-text3">Slush Wallet On-Chain Address</span>
                     <button
                       type="button"
                       onClick={async () => {
-                        await navigator.clipboard.writeText(linkedWalletAddress);
+                        const targetAddr = walletAccount?.address || linkedWalletAddress;
+                        await navigator.clipboard.writeText(targetAddr);
                         setCopiedLinked(true);
                         setTimeout(() => setCopiedLinked(false), 2000);
                       }}
@@ -573,7 +551,7 @@ export function ProfilePage() {
                         gap: 6,
                       }}
                     >
-                      <span style={{ flex: 1 }}>{linkedWalletAddress}</span>
+                      <span style={{ flex: 1 }}>{walletAccount?.address || linkedWalletAddress}</span>
                       {copiedLinked
                         ? <CheckCircleIcon size={14} color="#3a7a3c" strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
                         : <CopyIcon size={14} color="var(--text-3)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />}

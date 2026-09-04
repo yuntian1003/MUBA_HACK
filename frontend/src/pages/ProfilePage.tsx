@@ -133,11 +133,21 @@ export function ProfilePage() {
       if (realZk) localStorage.setItem('linkedZkAddress', realZk);
 
       // Save real connected addresses to backend profile
+      // Only pass linked addresses that are DIFFERENT from the current account to avoid self-loops
       if (account.address) {
-        upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, {
-          linkedWalletAddress: realWallet || undefined,
-          linkedZkAddress: realZk || undefined,
-        }).catch(console.error);
+        const linkPayload: { linkedWalletAddress?: string; linkedZkAddress?: string } = {};
+        if (account.isZk) {
+          // zkLogin user: only set linkedWalletAddress (the Slush wallet link)
+          if (realWallet && realWallet.toLowerCase() !== account.address.toLowerCase()) {
+            linkPayload.linkedWalletAddress = realWallet;
+          }
+        } else {
+          // Wallet user: only set linkedZkAddress (the Google account link)
+          if (realZk && realZk.toLowerCase() !== account.address.toLowerCase()) {
+            linkPayload.linkedZkAddress = realZk;
+          }
+        }
+        upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, linkPayload).catch(console.error);
       }
     }).catch(console.error);
   }, [account?.address, zkAccount, walletAccount?.address]);

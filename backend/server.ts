@@ -269,6 +269,7 @@ app.post('/api/users', async (req, res) => {
       await db.collection('users').doc(normAddress).set(userData, { merge: true });
 
       // Symmetrical link for linkedZkAddress
+      // (normAddress is a WALLET, zkNorm is the zk address - only set linkedWalletAddress on the zk doc)
       if (userData.linkedZkAddress && userData.linkedZkAddress !== normAddress) {
         const zkNorm = userData.linkedZkAddress;
         await db.collection('users').doc(zkNorm).set({
@@ -282,8 +283,12 @@ app.post('/api/users', async (req, res) => {
       }
 
       // Symmetrical link for linkedWalletAddress
+      // (normAddress is a ZK address, walletNorm is the wallet - only set linkedZkAddress on the wallet doc)
       if (userData.linkedWalletAddress && userData.linkedWalletAddress !== normAddress) {
         const walletNorm = userData.linkedWalletAddress;
+        // Read existing wallet doc first to avoid overwriting its own linkedWalletAddress field
+        const existingWalletDoc = await db.collection('users').doc(walletNorm).get();
+        const existingWalletData = existingWalletDoc.exists ? existingWalletDoc.data() : {};
         await db.collection('users').doc(walletNorm).set({
           address: walletNorm,
           linkedZkAddress: normAddress,
@@ -291,6 +296,10 @@ app.post('/api/users', async (req, res) => {
           avatarColor: userData.avatarColor,
           email: finalEmail,
           ...(userData.suins ? { suins: userData.suins } : {}),
+          // Preserve existing linkedWalletAddress only if it's not the wallet itself
+          ...((existingWalletData?.linkedWalletAddress && existingWalletData.linkedWalletAddress !== walletNorm) 
+            ? { linkedWalletAddress: existingWalletData.linkedWalletAddress } 
+            : {}),
         }, { merge: true });
       }
     } else {

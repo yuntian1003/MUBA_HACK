@@ -24,6 +24,8 @@ export interface ZkAccount {
 const STORAGE_KEYS = {
   JWT: 'smartsplit_zk_jwt',
   ACCOUNT: 'smartsplit_zk_account',
+  INCOMING_REQS: 'smartsplit_incoming_reqs',
+  SENT_REQS: 'smartsplit_sent_reqs',
 };
 
 export function useZkLogin() {
@@ -124,6 +126,8 @@ export function useZkLogin() {
     clearZkSession();
     localStorage.removeItem(STORAGE_KEYS.JWT);
     localStorage.removeItem(STORAGE_KEYS.ACCOUNT);
+    localStorage.removeItem(STORAGE_KEYS.INCOMING_REQS);
+    localStorage.removeItem(STORAGE_KEYS.SENT_REQS);
     setZkAccount(null);
     setJwt(null);
     setError(null);

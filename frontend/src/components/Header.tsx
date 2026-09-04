@@ -2,6 +2,7 @@
 import { useCurrentAccount, useDAppKit } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Logo } from './Logo';
 import { Avatar } from './Avatar';
 import { LogoutIcon } from './Icons';
@@ -23,8 +24,15 @@ export function Header() {
   const walletAccount = useCurrentAccount();
   const { disconnectWallet } = useDAppKit();
   const { zkAccount, loginWithGoogle, logoutZkLogin, isLoading: isZkLoading } = useZkLogin();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
+
+  function handleLogout() {
+    logoutZkLogin();
+    queryClient.clear();
+    navigate('/');
+  }
 
   const activeAccount = walletAccount
     ? { address: walletAccount.address, isZk: false }
@@ -82,7 +90,7 @@ export function Header() {
               </div>
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => (activeAccount.isZk ? logoutZkLogin() : disconnectWallet())}
+                onClick={() => (activeAccount.isZk ? handleLogout() : disconnectWallet())}
                 title="Disconnect account"
                 style={{ display: 'flex', alignItems: 'center', gap: 5 }}
               >

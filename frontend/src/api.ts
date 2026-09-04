@@ -32,20 +32,57 @@ export async function deleteUser(address: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete user');
 }
 
-export async function fetchCommunities(): Promise<any[]> {
-  const res = await fetch(`${BASE_URL}/communities`);
+export async function fetchCommunities(ownerAddress: string): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/communities?owner=${encodeURIComponent(ownerAddress.toLowerCase())}`);
   if (!res.ok) throw new Error('Failed to fetch communities');
   return res.json();
 }
 
-export async function createCommunity(name: string, description: string, memberAddresses: string[]): Promise<any> {
+export async function createCommunity(
+  name: string,
+  description: string,
+  memberAddresses: string[],
+  ownerAddress: string,
+): Promise<any> {
   const res = await fetch(`${BASE_URL}/communities`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, description, memberAddresses }),
+    body: JSON.stringify({ name, description, memberAddresses, ownerAddress }),
   });
   if (!res.ok) throw new Error('Failed to create community');
   return res.json();
+}
+
+// ── Per-user Friends API ──────────────────────────────────────────────────────
+export async function fetchFriends(ownerAddress: string, search = ''): Promise<any[]> {
+  const res = await fetch(
+    `${BASE_URL}/users/${encodeURIComponent(ownerAddress.toLowerCase())}/friends?q=${encodeURIComponent(search)}`
+  );
+  if (!res.ok) throw new Error('Failed to fetch friends');
+  return res.json();
+}
+
+export async function addFriend(
+  ownerAddress: string,
+  friend: { address: string; nickname: string; avatarColor: string; email?: string },
+): Promise<void> {
+  const res = await fetch(
+    `${BASE_URL}/users/${encodeURIComponent(ownerAddress.toLowerCase())}/friends`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(friend),
+    }
+  );
+  if (!res.ok) throw new Error('Failed to add friend');
+}
+
+export async function removeFriend(ownerAddress: string, friendAddress: string): Promise<void> {
+  const res = await fetch(
+    `${BASE_URL}/users/${encodeURIComponent(ownerAddress.toLowerCase())}/friends/${encodeURIComponent(friendAddress.toLowerCase())}`,
+    { method: 'DELETE' }
+  );
+  if (!res.ok) throw new Error('Failed to remove friend');
 }
 
 export async function createPaymentRequests(requests: Array<{

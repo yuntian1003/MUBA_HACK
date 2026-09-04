@@ -118,10 +118,15 @@ app.get('/api/users', async (req, res) => {
 });
 
 // ------------------- Communities API -------------------
-// Get all communities with their members
+// Get communities — filtered by ownerAddress if ?owner= is provided
 app.get('/api/communities', async (req, res) => {
   try {
-    const commSnap = await db.collection('communities').get();
+    const owner = (req.query.owner as string || '').toLowerCase().trim();
+    let query: FirebaseFirestore.Query = db.collection('communities');
+    if (owner) {
+      query = query.where('ownerAddress', '==', owner);
+    }
+    const commSnap = await query.get();
     const communities = await Promise.all(
       commSnap.docs.map(async commDoc => {
         const communityData = commDoc.data();
@@ -144,12 +149,18 @@ app.get('/api/communities', async (req, res) => {
 // Create a new community and add members
 app.post('/api/communities', async (req, res) => {
   try {
-    const { name, description, memberAddresses } = req.body;
+    const { name, description, memberAddresses, ownerAddress } = req.body;
     const id = 'community_' + Date.now();
     const lastActivity = 'Just now';
+    const owner = (ownerAddress || '').toLowerCase().trim();
 
-    // Create community document
-    await db.collection('communities').doc(id).set({ name, description: description || '', lastActivity });
+    // Create community document — store ownerAddress for per-user filtering
+    await db.collection('communities').doc(id).set({
+      name,
+      description: description || '',
+      lastActivity,
+      ownerAddress: owner,
+    });
 
     // Add each member as a sub‑document under the community
     const memberPromises = (memberAddresses || []).map(async (address: string) => {
@@ -169,10 +180,70 @@ app.post('/api/communities', async (req, res) => {
     });
     await Promise.all(memberPromises);
 
-    res.json({ id, name, description, lastActivity });
+    res.json({ id, name, description, lastActivity, ownerAddress: owner });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to create community' });
+  }
+});
+
+// ------------------- Friends API (per-user subcollection) -------------------
+// GET  /api/users/:owner/friends  — list this user's friends
+app.get('/api/users/:owner/friends', async (req, res) => {
+  try {
+    const owner = req.params.owner.toLowerCase().trim();
+    const q = (req.query.q as string || '').toLowerCase();
+    const snap = await db.collection('users').doc(owner).collection('friends').get();
+    let friends: any[] = snap.docs.map(d => ({ ...d.data(), address: d.id }));
+    if (q) {
+      friends = friends.filter((f: any) =>
+        (f.nickname && f.nickname.toLowerCase().includes(q)) ||
+        (f.address && f.address.toLowerCase().includes(q)) ||
+        (f.email && f.email.toLowerCase().includes(q))
+      );
+    }
+    res.json(friends);
+  } catch (e) {
+    console.error('Error fetching friends:', e);
+    res.status(500).json({ error: 'Failed to fetch friends' });
+  }
+});
+
+// POST /api/users/:owner/friends  — add a friend
+app.post('/api/users/:owner/friends', async (req, res) => {
+  try {
+    const owner = req.params.owner.toLowerCase().trim();
+    let { address, nickname, avatarColor, email } = req.body;
+    if (!address && !email) return res.status(400).json({ error: 'address or email required' });
+    if (!address && email) {
+      const hash = Buffer.from(email).toString('hex').padEnd(64, '0').slice(0, 64);
+      address = '0x' + hash;
+    }
+    address = address.toLowerCase().trim();
+    const friendData = {
+      address,
+      nickname: nickname || (email ? email.split('@')[0] : 'Friend'),
+      avatarColor: avatarColor || '#9F9DF3',
+      email: email || '',
+    };
+    await db.collection('users').doc(owner).collection('friends').doc(address).set(friendData, { merge: true });
+    res.json({ success: true, ...friendData });
+  } catch (e) {
+    console.error('Error adding friend:', e);
+    res.status(500).json({ error: 'Failed to add friend' });
+  }
+});
+
+// DELETE /api/users/:owner/friends/:friendAddress  — remove a friend
+app.delete('/api/users/:owner/friends/:friendAddress', async (req, res) => {
+  try {
+    const owner = req.params.owner.toLowerCase().trim();
+    const friendAddress = req.params.friendAddress.toLowerCase().trim();
+    await db.collection('users').doc(owner).collection('friends').doc(friendAddress).delete();
+    res.json({ success: true, friendAddress });
+  } catch (e) {
+    console.error('Error removing friend:', e);
+    res.status(500).json({ error: 'Failed to remove friend' });
   }
 });
 

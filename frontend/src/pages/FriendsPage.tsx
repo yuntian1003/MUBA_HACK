@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { RequireAuth } from '../components/RequireAuth';
 import { useNavigate } from 'react-router-dom';
 import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -9,11 +10,12 @@ import {
   ViewProfileIcon, PayIcon, ChevronRightIcon, EmptyBoxIcon,
   PlusIcon, UserPlusIcon, EmailIcon, WalletIcon, CheckIcon,
 } from '../components/Icons';
-import { fetchUsers, upsertUser, deleteUser } from '../api';
+import { fetchUsers, fetchFriends, addFriend, removeFriend } from '../api';
 import { apiUserToMember } from '../types';
 import { AVATAR_COLORS } from '../constants';
 import type { Member } from '../types';
 import { useSuiNSAddress } from '../hooks/useSuiNS';
+import { useZkLogin } from '../hooks/useZkLogin';
 
 export interface FriendRequestItem {
   id: string;
@@ -97,8 +99,11 @@ const INITIAL_SENT_REQUESTS: FriendRequestItem[] = [
 
 type TabType = 'all' | 'requests' | 'sent';
 
-export function FriendsPage() {
+function FriendsPageInner() {
   const account = useCurrentAccount();
+  const { zkAccount } = useZkLogin();
+  const ownerAddress = (account?.address ?? zkAccount?.address ?? '').toLowerCase();
+
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabType>('all');
@@ -127,17 +132,16 @@ export function FriendsPage() {
   const { data: suinsResolvedAddr, isLoading: isSuinsResolving } = useSuiNSAddress(suinsInput);
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
 
-  // ── Fetch all users from backend ────────────────────────────
+  // ── Fetch THIS user's friends from backend ────────────────
   const { data: rawUsers = [], isLoading, isError } = useQuery({
-    queryKey: ['users', search],
-    queryFn: () => fetchUsers(search),
+    queryKey: ['friends', ownerAddress, search],
+    queryFn: () => fetchFriends(ownerAddress, search),
+    enabled: !!ownerAddress,
     staleTime: 20_000,
   });
 
-  // Exclude current logged in user from friends list
-  const friends: Member[] = rawUsers
-    .filter((u: any) => !account?.address || u.address?.toLowerCase() !== account.address.toLowerCase())
-    .map(apiUserToMember);
+  // Map to Member type — already excludes self since friends subcollection won't have own address
+  const friends: Member[] = rawUsers.map(apiUserToMember);
 
   // ── Save requests to localStorage ───────────────────────────
   function updateIncoming(newList: FriendRequestItem[]) {
@@ -157,10 +161,15 @@ export function FriendsPage() {
     );
     updateIncoming(updated);
 
-    // Save to friends backend with real walletAddress if known
+    // Save to THIS user's friends subcollection
     try {
-      await upsertUser(reqItem.walletAddress || '', reqItem.name, reqItem.avatarColor, reqItem.email);
-      queryClient.invalidateQueries({ queryKey: ['users'] });
+      await addFriend(ownerAddress, {
+        address: reqItem.walletAddress || '',
+        nickname: reqItem.name,
+        avatarColor: reqItem.avatarColor,
+        email: reqItem.email,
+      });
+      queryClient.invalidateQueries({ queryKey: ['friends', ownerAddress] });
     } catch (e) {
       console.error(e);
     }
@@ -181,9 +190,9 @@ export function FriendsPage() {
   async function handleRemoveFriend(friend: Member) {
     try {
       if (friend.walletAddress) {
-        await deleteUser(friend.walletAddress);
+        await removeFriend(ownerAddress, friend.walletAddress);
       }
-      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['friends', ownerAddress] });
     } catch (e) {
       console.error('Failed to remove friend:', e);
     }
@@ -1094,5 +1103,13 @@ export function FriendsPage() {
         )}
       </AnimatePresence>
     </main>
+  );
+}
+
+export function FriendsPage() {
+  return (
+    <RequireAuth pageName="Friends">
+      <FriendsPageInner />
+    </RequireAuth>
   );
 }

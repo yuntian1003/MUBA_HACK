@@ -1,6 +1,8 @@
 // src/pages/CommunityPage.tsx
+import { RequireAuth } from '../components/RequireAuth';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Avatar } from '../components/Avatar';
@@ -9,6 +11,7 @@ import {
   ChevronRightIcon, CheckIcon, GroupIcon, EmptyBoxIcon,
 } from '../components/Icons';
 import { fetchCommunities, createCommunity, fetchUsers } from '../api';
+import { useZkLogin } from '../hooks/useZkLogin';
 import { apiUserToMember, apiCommunityToFrontend } from '../types';
 import type { Community, Member } from '../types';
 
@@ -61,7 +64,11 @@ function AvatarCluster({ members }: { members: Member[] }) {
   );
 }
 
-export function CommunityPage() {
+function CommunityPageInner() {
+  const walletAccount = useCurrentAccount();
+  const { zkAccount } = useZkLogin();
+  const ownerAddress = (walletAccount?.address ?? zkAccount?.address ?? '').toLowerCase();
+
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
@@ -71,13 +78,14 @@ export function CommunityPage() {
   const [newDescription, setNewDescription] = useState('');
   const [selectedAddresses, setSelectedAddresses] = useState<string[]>([]);
 
-  // ── Fetch communities from backend ────────────────────────────
+  // ── Fetch THIS user's communities from backend ───────────────
   const { data: communities = [], isLoading, isError } = useQuery({
-    queryKey: ['communities'],
+    queryKey: ['communities', ownerAddress],
     queryFn: async () => {
-      const raw = await fetchCommunities();
+      const raw = await fetchCommunities(ownerAddress);
       return raw.map(apiCommunityToFrontend);
     },
+    enabled: !!ownerAddress,
     staleTime: 30_000,
   });
 
@@ -90,9 +98,9 @@ export function CommunityPage() {
 
   // ── Create community mutation ────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: () => createCommunity(newName.trim(), newDescription.trim(), selectedAddresses),
+    mutationFn: () => createCommunity(newName.trim(), newDescription.trim(), selectedAddresses, ownerAddress),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['communities'] });
+      queryClient.invalidateQueries({ queryKey: ['communities', ownerAddress] });
       setNewName('');
       setNewDescription('');
       setSelectedAddresses([]);
@@ -414,5 +422,13 @@ export function CommunityPage() {
         )}
       </AnimatePresence>
     </main>
+  );
+}
+
+export function CommunityPage() {
+  return (
+    <RequireAuth pageName="Community">
+      <CommunityPageInner />
+    </RequireAuth>
   );
 }

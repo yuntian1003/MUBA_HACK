@@ -37,11 +37,20 @@ export interface Member {
 }
 
 // Utility to map an ApiUser → frontend Member
-export function apiUserToMember(u: ApiUser): Member {
+export function apiUserToMember(u: any): Member {
+  if (!u) {
+    return {
+      id: 'unknown_' + Math.random(),
+      name: 'Unknown Member',
+      walletAddress: '',
+      avatarColor: '#9F9DF3',
+    };
+  }
+  const addr = u.address || u.walletAddress || '';
   return {
-    id: u.address,
-    name: u.nickname || (u.email ? u.email.split('@')[0] : (u.suins || u.address.slice(0, 8) + '…')),
-    walletAddress: u.address,
+    id: addr || 'user_' + Math.random(),
+    name: u.nickname || u.name || (u.email ? u.email.split('@')[0] : (u.suins || (addr ? addr.slice(0, 8) + '…' : 'Member'))),
+    walletAddress: addr,
     avatarColor: u.avatarColor || '#9F9DF3',
     email: u.email,
     suins: u.suins,
@@ -49,13 +58,22 @@ export function apiUserToMember(u: ApiUser): Member {
 }
 
 // Utility to map an ApiCommunity → frontend Community
-export function apiCommunityToFrontend(c: ApiCommunity): Community {
+export function apiCommunityToFrontend(c: any): Community {
+  if (!c) {
+    return {
+      id: 'community_unknown',
+      name: 'Community',
+      description: '',
+      lastActivity: 'Recently',
+      members: [],
+    };
+  }
   return {
-    id: c.id,
-    name: c.name,
-    description: c.description,
-    lastActivity: c.lastActivity,
-    members: c.members.map(apiUserToMember),
+    id: c.id || 'comm_' + Math.random(),
+    name: c.name || 'Community',
+    description: c.description || '',
+    lastActivity: c.lastActivity || 'Recently',
+    members: Array.isArray(c.members) ? c.members.map(apiUserToMember) : [],
   };
 }
 

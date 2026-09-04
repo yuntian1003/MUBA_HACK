@@ -8,23 +8,53 @@ import fs from 'fs';
 
 dotenv.config();
 
-// Initialise Firebase Admin SDK
-const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ??
-    path.resolve(__dirname, 'firebase-key.json');
-const hasFirebaseCredentials = fs.existsSync(serviceAccountPath);
+let hasFirebaseCredentials = false;
+let db: FirebaseFirestore.Firestore | any = null;
 
-if (!admin.apps.length) {
-  if (hasFirebaseCredentials) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccountPath as string),
-    });
-  } else {
-    admin.initializeApp();
-    console.warn('Firebase credentials not found. Payment requests will use temporary in-memory storage.');
+// 1. Try FIREBASE_SERVICE_ACCOUNT environment variable first (for Render deployment)
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  try {
+    const serviceAccountObj = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccountObj),
+      });
+    }
+    db = admin.firestore();
+    hasFirebaseCredentials = true;
+    console.log('Firebase initialized from FIREBASE_SERVICE_ACCOUNT environment variable.');
+  } catch (err) {
+    console.warn('Failed to initialize Firebase from FIREBASE_SERVICE_ACCOUNT env var:', err);
   }
 }
 
-const db = admin.firestore();
+// 2. Try local firebase-key.json file if env var was not present/valid
+if (!hasFirebaseCredentials) {
+  const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ?? path.resolve(__dirname, 'firebase-key.json');
+  if (fs.existsSync(serviceAccountPath)) {
+    try {
+      if (!admin.apps.length) {
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccountPath as string),
+        });
+      }
+      db = admin.firestore();
+      hasFirebaseCredentials = true;
+      console.log('Firebase initialized from local firebase-key.json file.');
+    } catch (err) {
+      console.warn('Failed to initialize Firebase from firebase-key.json:', err);
+    }
+  }
+}
+
+if (!hasFirebaseCredentials) {
+  console.warn('Firebase credentials not found. Serving with resilient in-memory storage.');
+}
+
+// In-memory fallback stores
+const memoryUsers = new Map<string, any>();
+const memoryCommunities = new Map<string, any>();
+const memoryFriends = new Map<string, Map<string, any>>();
 const memoryPaymentRequests = new Map<string, any>();
 const memoryFriendRequests = new Map<string, any>();
 
@@ -40,18 +70,27 @@ app.use((req, res, next) => {
 
 // Health check endpoint
 app.get('/api/ping', (req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now() });
+  res.json({ status: 'ok', timestamp: Date.now(), firebase: hasFirebaseCredentials });
 });
 
 // ------------------- Users API -------------------
 // Get a single user profile
 app.get('/api/users/:address', async (req, res) => {
   try {
-    const doc = await db.collection('users').doc(req.params.address).get();
-    if (!doc.exists) {
-      return res.status(404).json({ error: 'User not found' });
+    const addressKey = req.params.address.toLowerCase().trim();
+    if (hasFirebaseCredentials) {
+      const doc = await db.collection('users').doc(addressKey).get();
+      if (!doc.exists) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      return res.json(doc.data());
+    } else {
+      const user = memoryUsers.get(addressKey);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      return res.json(user);
     }
-    res.json(doc.data());
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to fetch user' });
@@ -64,7 +103,6 @@ app.post('/api/users', async (req, res) => {
     let { address, nickname, avatarColor, email, linkedZkAddress, linkedWalletAddress } = req.body;
     if (!address && !email) return res.status(400).json({ error: 'Address or email required' });
 
-    // If only email is provided or address is empty, generate a valid deterministic mock address based on email
     if (!address && email) {
       const hash = Buffer.from(email).toString('hex').padEnd(64, '0').slice(0, 64);
       address = '0x' + hash;
@@ -87,18 +125,33 @@ app.post('/api/users', async (req, res) => {
       userData.linkedWalletAddress = linkedWalletAddress.toLowerCase().trim();
     }
 
-    await db.collection('users').doc(normAddress).set(userData, { merge: true });
-
-    // If linkedZkAddress is supplied, also set linkedWalletAddress on that zkLogin document
-    if (linkedZkAddress && linkedZkAddress.toLowerCase().trim() !== normAddress) {
-      const zkNorm = linkedZkAddress.toLowerCase().trim();
-      await db.collection('users').doc(zkNorm).set({
-        address: zkNorm,
-        linkedWalletAddress: normAddress,
-        nickname: userData.nickname,
-        avatarColor: userData.avatarColor,
-        email: finalEmail,
-      }, { merge: true });
+    if (hasFirebaseCredentials) {
+      await db.collection('users').doc(normAddress).set(userData, { merge: true });
+      if (linkedZkAddress && linkedZkAddress.toLowerCase().trim() !== normAddress) {
+        const zkNorm = linkedZkAddress.toLowerCase().trim();
+        await db.collection('users').doc(zkNorm).set({
+          address: zkNorm,
+          linkedWalletAddress: normAddress,
+          nickname: userData.nickname,
+          avatarColor: userData.avatarColor,
+          email: finalEmail,
+        }, { merge: true });
+      }
+    } else {
+      const existing = memoryUsers.get(normAddress) || {};
+      memoryUsers.set(normAddress, { ...existing, ...userData });
+      if (linkedZkAddress && linkedZkAddress.toLowerCase().trim() !== normAddress) {
+        const zkNorm = linkedZkAddress.toLowerCase().trim();
+        const existingZk = memoryUsers.get(zkNorm) || {};
+        memoryUsers.set(zkNorm, {
+          ...existingZk,
+          address: zkNorm,
+          linkedWalletAddress: normAddress,
+          nickname: userData.nickname,
+          avatarColor: userData.avatarColor,
+          email: finalEmail,
+        });
+      }
     }
 
     res.json({ success: true, ...userData });
@@ -111,8 +164,12 @@ app.post('/api/users', async (req, res) => {
 // Delete a user profile (remove friend)
 app.delete('/api/users/:address', async (req, res) => {
   try {
-    const { address } = req.params;
-    await db.collection('users').doc(address).delete();
+    const address = req.params.address.toLowerCase().trim();
+    if (hasFirebaseCredentials) {
+      await db.collection('users').doc(address).delete();
+    } else {
+      memoryUsers.delete(address);
+    }
     res.json({ success: true, address });
   } catch (e) {
     console.error(e);
@@ -120,12 +177,18 @@ app.delete('/api/users/:address', async (req, res) => {
   }
 });
 
-// Search all users (simple client‑side filter for demo)
+// Search all users
 app.get('/api/users', async (req, res) => {
   try {
     const q = (req.query.q as string || '').toLowerCase();
-    const snapshot = await db.collection('users').get();
-    let users: any[] = snapshot.docs.map(d => ({ ...d.data(), address: d.id }));
+    let users: any[] = [];
+    if (hasFirebaseCredentials) {
+      const snapshot = await db.collection('users').get();
+      users = snapshot.docs.map((d: any) => ({ ...d.data(), address: d.id }));
+    } else {
+      users = Array.from(memoryUsers.values());
+    }
+
     if (q) {
       users = users.filter((u: any) =>
         (u.nickname && u.nickname.toLowerCase().includes(q)) ||
@@ -141,35 +204,41 @@ app.get('/api/users', async (req, res) => {
 });
 
 // ------------------- Communities API -------------------
-// Get communities — filtered by ownerAddress if ?owner= is provided
 app.get('/api/communities', async (req, res) => {
   try {
     const owner = (req.query.owner as string || '').toLowerCase().trim();
-    let query: FirebaseFirestore.Query = db.collection('communities');
-    if (owner) {
-      query = query.where('ownerAddress', '==', owner);
+    if (hasFirebaseCredentials) {
+      let query: FirebaseFirestore.Query = db.collection('communities');
+      if (owner) {
+        query = query.where('ownerAddress', '==', owner);
+      }
+      const commSnap = await query.get();
+      const communities = await Promise.all(
+        commSnap.docs.map(async (commDoc: any) => {
+          const communityData = commDoc.data();
+          const membersSnap = await db
+            .collection('communities')
+            .doc(commDoc.id)
+            .collection('members')
+            .get();
+          const members = membersSnap.docs.map((mDoc: any) => mDoc.data());
+          return { id: commDoc.id, ...communityData, members };
+        })
+      );
+      res.json(communities);
+    } else {
+      let communities = Array.from(memoryCommunities.values());
+      if (owner) {
+        communities = communities.filter((c: any) => c.ownerAddress === owner);
+      }
+      res.json(communities);
     }
-    const commSnap = await query.get();
-    const communities = await Promise.all(
-      commSnap.docs.map(async commDoc => {
-        const communityData = commDoc.data();
-        const membersSnap = await db
-          .collection('communities')
-          .doc(commDoc.id)
-          .collection('members')
-          .get();
-        const members = membersSnap.docs.map(mDoc => mDoc.data());
-        return { id: commDoc.id, ...communityData, members };
-      })
-    );
-    res.json(communities);
   } catch (e) {
     console.error('Error fetching communities:', e);
     res.status(500).json({ error: 'Failed to fetch communities' });
   }
 });
 
-// Create a new community and add members
 app.post('/api/communities', async (req, res) => {
   try {
     const { name, description, memberAddresses, ownerAddress } = req.body;
@@ -177,47 +246,69 @@ app.post('/api/communities', async (req, res) => {
     const lastActivity = 'Just now';
     const owner = (ownerAddress || '').toLowerCase().trim();
 
-    // Create community document — store ownerAddress for per-user filtering
-    await db.collection('communities').doc(id).set({
+    const members: any[] = [];
+    for (const address of (memberAddresses || [])) {
+      let userData: any = {};
+      if (hasFirebaseCredentials) {
+        const userDoc = await db.collection('users').doc(address).get();
+        if (userDoc.exists) userData = userDoc.data();
+      } else {
+        userData = memoryUsers.get(address.toLowerCase().trim()) || {};
+      }
+
+      members.push({
+        walletAddress: address,
+        name: userData?.nickname || address.slice(0, 8) + '…',
+        avatarColor: userData?.avatarColor || '#9F9DF3',
+      });
+    }
+
+    const commData = {
+      id,
       name,
       description: description || '',
       lastActivity,
       ownerAddress: owner,
-    });
+      members,
+    };
 
-    // Add each member as a sub‑document under the community
-    const memberPromises = (memberAddresses || []).map(async (address: string) => {
-      const userDoc = await db.collection('users').doc(address).get();
-      const userData = userDoc.exists ? userDoc.data() : {};
-      const memberData = {
-        walletAddress: address,
-        name: userData?.nickname || address.slice(0, 8) + '…',
-        avatarColor: userData?.avatarColor || '#9F9DF3',
-      };
-      await db
-        .collection('communities')
-        .doc(id)
-        .collection('members')
-        .doc(address)
-        .set(memberData);
-    });
-    await Promise.all(memberPromises);
+    if (hasFirebaseCredentials) {
+      await db.collection('communities').doc(id).set({
+        name,
+        description: description || '',
+        lastActivity,
+        ownerAddress: owner,
+      });
 
-    res.json({ id, name, description, lastActivity, ownerAddress: owner });
+      for (const m of members) {
+        await db.collection('communities').doc(id).collection('members').doc(m.walletAddress).set(m);
+      }
+    } else {
+      memoryCommunities.set(id, commData);
+    }
+
+    res.json(commData);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to create community' });
   }
 });
 
-// ------------------- Friends API (per-user subcollection) -------------------
-// GET  /api/users/:owner/friends  — list this user's friends
+// ------------------- Friends API -------------------
 app.get('/api/users/:owner/friends', async (req, res) => {
   try {
     const owner = req.params.owner.toLowerCase().trim();
     const q = (req.query.q as string || '').toLowerCase();
-    const snap = await db.collection('users').doc(owner).collection('friends').get();
-    let friends: any[] = snap.docs.map(d => ({ ...d.data(), address: d.id }));
+    let friends: any[] = [];
+
+    if (hasFirebaseCredentials) {
+      const snap = await db.collection('users').doc(owner).collection('friends').get();
+      friends = snap.docs.map((d: any) => ({ ...d.data(), address: d.id }));
+    } else {
+      const userFriendsMap = memoryFriends.get(owner);
+      friends = userFriendsMap ? Array.from(userFriendsMap.values()) : [];
+    }
+
     if (q) {
       friends = friends.filter((f: any) =>
         (f.nickname && f.nickname.toLowerCase().includes(q)) ||
@@ -233,7 +324,6 @@ app.get('/api/users/:owner/friends', async (req, res) => {
   }
 });
 
-// POST /api/users/:owner/friends  — add a friend
 app.post('/api/users/:owner/friends', async (req, res) => {
   try {
     const owner = req.params.owner.toLowerCase().trim();
@@ -251,7 +341,18 @@ app.post('/api/users/:owner/friends', async (req, res) => {
       email: email || '',
       suins: suins || '',
     };
-    await db.collection('users').doc(owner).collection('friends').doc(address).set(friendData, { merge: true });
+
+    if (hasFirebaseCredentials) {
+      await db.collection('users').doc(owner).collection('friends').doc(address).set(friendData, { merge: true });
+    } else {
+      let userFriendsMap = memoryFriends.get(owner);
+      if (!userFriendsMap) {
+        userFriendsMap = new Map();
+        memoryFriends.set(owner, userFriendsMap);
+      }
+      userFriendsMap.set(address, friendData);
+    }
+
     res.json({ success: true, ...friendData });
   } catch (e) {
     console.error('Error adding friend:', e);
@@ -259,12 +360,17 @@ app.post('/api/users/:owner/friends', async (req, res) => {
   }
 });
 
-// DELETE /api/users/:owner/friends/:friendAddress  — remove a friend
 app.delete('/api/users/:owner/friends/:friendAddress', async (req, res) => {
   try {
     const owner = req.params.owner.toLowerCase().trim();
     const friendAddress = req.params.friendAddress.toLowerCase().trim();
-    await db.collection('users').doc(owner).collection('friends').doc(friendAddress).delete();
+
+    if (hasFirebaseCredentials) {
+      await db.collection('users').doc(owner).collection('friends').doc(friendAddress).delete();
+    } else {
+      memoryFriends.get(owner)?.delete(friendAddress);
+    }
+
     res.json({ success: true, friendAddress });
   } catch (e) {
     console.error('Error removing friend:', e);
@@ -273,7 +379,6 @@ app.delete('/api/users/:owner/friends/:friendAddress', async (req, res) => {
 });
 
 // ------------------- Payment Requests API -------------------
-// Create one or more payment requests
 app.post('/api/payment-requests', async (req, res) => {
   try {
     const rawRequests = Array.isArray(req.body.requests) ? req.body.requests : [req.body];
@@ -310,12 +415,11 @@ app.post('/api/payment-requests', async (req, res) => {
   }
 });
 
-// Get payment requests for an address (incoming requests to pay, and outgoing requests)
 app.get('/api/payment-requests', async (req, res) => {
   try {
     const address = (req.query.address as string || '').toLowerCase().trim();
     const all = hasFirebaseCredentials
-      ? (await db.collection('payment_requests').get()).docs.map(d => d.data())
+      ? (await db.collection('payment_requests').get()).docs.map((d: any) => d.data())
       : Array.from(memoryPaymentRequests.values());
 
     if (!address) {
@@ -337,7 +441,6 @@ app.get('/api/payment-requests', async (req, res) => {
   }
 });
 
-// Update payment request status (e.g. mark as paid or declined)
 app.patch('/api/payment-requests/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -364,7 +467,6 @@ app.patch('/api/payment-requests/:id', async (req, res) => {
 });
 
 // ------------------- Friend Requests API -------------------
-// Create a friend request
 app.post('/api/friend-requests', async (req, res) => {
   try {
     const {
@@ -393,24 +495,36 @@ app.post('/api/friend-requests', async (req, res) => {
     const finalSenderAddress = senderAddress.toLowerCase().trim();
     const finalSenderEmail = (senderEmail || '').toLowerCase().trim();
 
-    // Try to resolve recipient address if missing and email given
     if (!finalRecipientAddress && finalRecipientEmail) {
       try {
-        const usersSnap = await db.collection('users').where('email', '==', finalRecipientEmail).get();
-        if (!usersSnap.empty) {
-          finalRecipientAddress = usersSnap.docs[0].id.toLowerCase();
+        if (hasFirebaseCredentials) {
+          const usersSnap = await db.collection('users').where('email', '==', finalRecipientEmail).get();
+          if (!usersSnap.empty) {
+            finalRecipientAddress = usersSnap.docs[0].id.toLowerCase();
+          }
+        } else {
+          for (const u of memoryUsers.values()) {
+            if (u.email === finalRecipientEmail) {
+              finalRecipientAddress = u.address;
+              break;
+            }
+          }
         }
       } catch (e) {
         console.warn('Could not lookup recipient by email:', e);
       }
     }
 
-    // Also try to resolve recipient email if missing and address given
     if (finalRecipientAddress && !finalRecipientEmail) {
       try {
-        const userDoc = await db.collection('users').doc(finalRecipientAddress).get();
-        if (userDoc.exists && userDoc.data()?.email) {
-          finalRecipientEmail = userDoc.data()!.email.toLowerCase().trim();
+        if (hasFirebaseCredentials) {
+          const userDoc = await db.collection('users').doc(finalRecipientAddress).get();
+          if (userDoc.exists && userDoc.data()?.email) {
+            finalRecipientEmail = userDoc.data()!.email.toLowerCase().trim();
+          }
+        } else {
+          const u = memoryUsers.get(finalRecipientAddress);
+          if (u?.email) finalRecipientEmail = u.email;
         }
       } catch (e) {
         console.warn('Could not lookup recipient email by address:', e);
@@ -452,37 +566,40 @@ app.post('/api/friend-requests', async (req, res) => {
   }
 });
 
-// Get friend requests for a user (incoming requests received, and outgoing requests sent)
 app.get('/api/friend-requests', async (req, res) => {
   try {
     const address = (req.query.address as string || '').toLowerCase().trim();
     const email = (req.query.email as string || '').toLowerCase().trim();
 
     const all: any[] = hasFirebaseCredentials
-      ? (await db.collection('friend_requests').get()).docs.map(d => d.data())
+      ? (await db.collection('friend_requests').get()).docs.map((d: any) => d.data())
       : Array.from(memoryFriendRequests.values());
 
     if (!address && !email) {
       return res.json({ incoming: [], outgoing: [] });
     }
 
-    // Gather all addresses & emails for this user (including linked addresses/email from their user profile)
     const myAddresses = new Set<string>();
     const myEmails = new Set<string>();
     if (address) myAddresses.add(address);
     if (email) myEmails.add(email);
 
-    if (address && hasFirebaseCredentials) {
-      try {
-        const userDoc = await db.collection('users').doc(address).get();
-        if (userDoc.exists) {
-          const u = userDoc.data() || {};
-          if (u.email) myEmails.add(u.email.toLowerCase().trim());
-          if (u.linkedZkAddress) myAddresses.add(u.linkedZkAddress.toLowerCase().trim());
-          if (u.linkedWalletAddress) myAddresses.add(u.linkedWalletAddress.toLowerCase().trim());
+    if (address) {
+      let u: any = null;
+      if (hasFirebaseCredentials) {
+        try {
+          const userDoc = await db.collection('users').doc(address).get();
+          if (userDoc.exists) u = userDoc.data();
+        } catch (err) {
+          console.warn('Could not fetch linked addresses for friend requests query:', err);
         }
-      } catch (err) {
-        console.warn('Could not fetch linked addresses for friend requests query:', err);
+      } else {
+        u = memoryUsers.get(address);
+      }
+      if (u) {
+        if (u.email) myEmails.add(u.email.toLowerCase().trim());
+        if (u.linkedZkAddress) myAddresses.add(u.linkedZkAddress.toLowerCase().trim());
+        if (u.linkedWalletAddress) myAddresses.add(u.linkedWalletAddress.toLowerCase().trim());
       }
     }
 
@@ -517,7 +634,6 @@ app.get('/api/friend-requests', async (req, res) => {
   }
 });
 
-// Update friend request status (accept, reject, cancel)
 app.patch('/api/friend-requests/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -549,7 +665,6 @@ app.patch('/api/friend-requests/:id', async (req, res) => {
       memoryFriendRequests.set(id, updated);
     }
 
-    // If accepted, add both users to each other's friends subcollection (bidirectional friendship)
     if (status === 'accepted') {
       const sAddr = (existing.senderAddress || '').toLowerCase().trim();
       const rAddr = (recipientAddress || existing.recipientAddress || '').toLowerCase().trim();
@@ -576,6 +691,20 @@ app.patch('/api/friend-requests/:id', async (req, res) => {
             db.collection('users').doc(rAddr).collection('friends').doc(sAddr).set(sFriendData, { merge: true }),
             db.collection('users').doc(sAddr).collection('friends').doc(rAddr).set(rFriendData, { merge: true }),
           ]);
+        } else {
+          let sFriends = memoryFriends.get(rAddr);
+          if (!sFriends) {
+            sFriends = new Map();
+            memoryFriends.set(rAddr, sFriends);
+          }
+          sFriends.set(sAddr, sFriendData);
+
+          let rFriends = memoryFriends.get(sAddr);
+          if (!rFriends) {
+            rFriends = new Map();
+            memoryFriends.set(sAddr, rFriends);
+          }
+          rFriends.set(rAddr, rFriendData);
         }
       }
     }
@@ -591,5 +720,5 @@ app.patch('/api/friend-requests/:id', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
-  console.log(`Using Firebase project: smartsplit-4728d`);
+  console.log(`Firebase status: ${hasFirebaseCredentials ? 'Connected (Firestore)' : 'In-memory fallback mode'}`);
 });

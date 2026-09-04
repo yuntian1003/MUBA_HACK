@@ -37,6 +37,9 @@ Thumbs.db
 # Firebase service account key (keep secret)
 backend/*.json
 *.json
+!package.json
+!**/package.json
+!**/vercel.json
 
 # SQLite database files (migrated to Firebase)
 backend/*.sqlite

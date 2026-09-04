@@ -8,13 +8,22 @@ import { Avatar } from '../components/Avatar';
 import {
   FriendsIcon, SearchIcon, TransferIcon, ReceiveIcon,
   ViewProfileIcon, PayIcon, ChevronRightIcon, EmptyBoxIcon,
-  PlusIcon, UserPlusIcon, EmailIcon, WalletIcon, CheckIcon,
+  PlusIcon, UserPlusIcon, CheckIcon,
 } from '../components/Icons';
-import { fetchUsers, fetchFriends, addFriend, removeFriend } from '../api';
+import {
+  fetchUsers,
+  fetchFriends,
+  addFriend,
+  removeFriend,
+  sendFriendRequest,
+  fetchFriendRequests,
+  updateFriendRequest,
+  fetchUser,
+} from '../api';
 import { apiUserToMember } from '../types';
-import { AVATAR_COLORS } from '../constants';
 import type { Member } from '../types';
-import { useSuiNSAddress } from '../hooks/useSuiNS';
+import { AVATAR_COLORS } from '../constants';
+import { useSuiNSAddress, useSuiNSName } from '../hooks/useSuiNS';
 import { useZkLogin } from '../hooks/useZkLogin';
 
 export interface FriendRequestItem {
@@ -23,79 +32,20 @@ export interface FriendRequestItem {
   avatarColor: string;
   email?: string;
   walletAddress?: string;
+  suinsDomain?: string;
   timestamp: string;
   status: 'pending' | 'accepted' | 'rejected' | 'sent';
 }
 
-const INITIAL_INCOMING_REQUESTS: FriendRequestItem[] = [
-  {
-    id: 'req-in-1',
-    name: 'Alice Lim',
-    avatarColor: '#9F9DF3',
-    email: 'alice.lim@gmail.com',
-    timestamp: '10 mins ago',
-    status: 'pending',
-  },
-  {
-    id: 'req-in-2',
-    name: 'Bob Tan',
-    avatarColor: '#FF9BB3',
-    email: 'bob.tan99@gmail.com',
-    timestamp: '2 hours ago',
-    status: 'pending',
-  },
-  {
-    id: 'req-in-3',
-    name: 'Charlie Ng',
-    avatarColor: '#C9EBCA',
-    email: 'charlie.ng@gmail.com',
-    timestamp: 'Yesterday',
-    status: 'accepted',
-  },
-  {
-    id: 'req-in-4',
-    name: 'David Wong',
-    avatarColor: '#FFD6A5',
-    email: 'david.wong@gmail.com',
-    timestamp: '3 days ago',
-    status: 'rejected',
-  },
-];
-
-const INITIAL_SENT_REQUESTS: FriendRequestItem[] = [
-  {
-    id: 'req-out-1',
-    name: 'Eve Chong',
-    avatarColor: '#A5C8FF',
-    email: 'eve.chong@gmail.com',
-    timestamp: 'Just now',
-    status: 'sent',
-  },
-  {
-    id: 'req-out-2',
-    name: 'Frank Lee',
-    avatarColor: '#F8B4D9',
-    email: 'frank.lee@gmail.com',
-    timestamp: '1 hour ago',
-    status: 'sent',
-  },
-  {
-    id: 'req-out-3',
-    name: 'Grace Ho',
-    avatarColor: '#B5EAD7',
-    email: 'grace.ho@gmail.com',
-    timestamp: 'Yesterday',
-    status: 'accepted',
-  },
-  {
-    id: 'req-out-4',
-    name: 'Ivan Tan',
-    avatarColor: '#FFDAC1',
-    email: 'ivan.tan@gmail.com',
-    timestamp: '3 days ago',
-    status: 'rejected',
-  },
-];
+function formatRelativeTime(timestamp?: number): string {
+  if (!timestamp) return 'Recently';
+  const diff = Date.now() - timestamp;
+  if (diff < 60_000) return 'Just now';
+  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} mins ago`;
+  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} hours ago`;
+  if (diff < 172800_000) return 'Yesterday';
+  return `${Math.floor(diff / 86400_000)} days ago`;
+}
 
 type TabType = 'all' | 'requests' | 'sent';
 
@@ -110,24 +60,53 @@ function FriendsPageInner() {
   const [selectedFriend, setSelectedFriend] = useState<Member | null>(null);
   const [search, setSearch] = useState('');
 
-  // ── Requests state ──────────────────────────────────────────
-  const [incomingRequests, setIncomingRequests] = useState<FriendRequestItem[]>(() => {
-    const saved = localStorage.getItem('smartsplit_incoming_reqs');
-    return saved ? JSON.parse(saved) : INITIAL_INCOMING_REQUESTS;
+  // ── Current user profile ────────────────────────────────────
+  const { data: myProfile } = useQuery({
+    queryKey: ['my-profile', ownerAddress],
+    queryFn: () => fetchUser(ownerAddress),
+    enabled: !!ownerAddress,
   });
 
-  const [sentRequests, setSentRequests] = useState<FriendRequestItem[]>(() => {
-    const saved = localStorage.getItem('smartsplit_sent_reqs');
-    return saved ? JSON.parse(saved) : INITIAL_SENT_REQUESTS;
+  const myEffectiveEmail = (myProfile?.email || zkAccount?.email || '').toLowerCase().trim();
+  const myName = myProfile?.nickname || zkAccount?.name || (ownerAddress ? `${ownerAddress.slice(0, 6)}…` : 'Friend');
+  const myAvatarColor = myProfile?.avatarColor || AVATAR_COLORS[0];
+
+  const { data: mySuiNSName } = useSuiNSName(ownerAddress);
+
+  // ── Fetch Friend Requests from Backend ──────────────────────
+  const { data: requestsData } = useQuery({
+    queryKey: ['friend-requests', ownerAddress, myEffectiveEmail],
+    queryFn: () => fetchFriendRequests(ownerAddress, myEffectiveEmail),
+    enabled: !!ownerAddress || !!myEffectiveEmail,
+    refetchInterval: 4000,
   });
 
-  // ── Add Friend Modal State ──────────────────────────────────
+  const incomingRequests: FriendRequestItem[] = (requestsData?.incoming || []).map((r: any) => ({
+    id: r.id,
+    name: r.senderName || 'Friend',
+    avatarColor: r.senderAvatarColor || AVATAR_COLORS[0],
+    email: r.senderEmail || undefined,
+    walletAddress: r.senderAddress,
+    suinsDomain: r.senderSuins || undefined,
+    timestamp: formatRelativeTime(r.createdAt),
+    status: r.status as 'pending' | 'accepted' | 'rejected',
+  }));
+
+  const sentRequests: FriendRequestItem[] = (requestsData?.outgoing || []).map((r: any) => ({
+    id: r.id,
+    name: r.recipientName || 'Friend',
+    avatarColor: AVATAR_COLORS[1],
+    email: r.recipientEmail || (r.recipientAddress ? (r.recipientAddress.length > 14 ? `${r.recipientAddress.slice(0, 8)}…` : r.recipientAddress) : undefined),
+    walletAddress: r.recipientAddress,
+    suinsDomain: r.recipientSuins || undefined,
+    timestamp: formatRelativeTime(r.createdAt),
+    status: r.status === 'pending' ? 'sent' : (r.status as 'accepted' | 'rejected' | 'sent'),
+  }));
+
+  // ── Add Friend Modal State (SuiNS Domain Only) ──────────────
   const [showAddModal, setShowAddModal] = useState(false);
   const [attemptedAddFriend, setAttemptedAddFriend] = useState(false);
   const [friendName, setFriendName] = useState('');
-  const [addMethod, setAddMethod] = useState<'address' | 'gmail' | 'suins'>('gmail');
-  const [walletInput, setWalletInput] = useState('');
-  const [gmailInput, setGmailInput] = useState('');
   const [suinsInput, setSuinsInput] = useState('');
   const { data: suinsResolvedAddr, isLoading: isSuinsResolving } = useSuiNSAddress(suinsInput);
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
@@ -137,54 +116,44 @@ function FriendsPageInner() {
     queryKey: ['friends', ownerAddress, search],
     queryFn: () => fetchFriends(ownerAddress, search),
     enabled: !!ownerAddress,
-    staleTime: 20_000,
+    staleTime: 10_000,
   });
 
   // Map to Member type — already excludes self since friends subcollection won't have own address
   const friends: Member[] = rawUsers.map(apiUserToMember);
 
-  // ── Save requests to localStorage ───────────────────────────
-  function updateIncoming(newList: FriendRequestItem[]) {
-    setIncomingRequests(newList);
-    localStorage.setItem('smartsplit_incoming_reqs', JSON.stringify(newList));
-  }
-
-  function updateSent(newList: FriendRequestItem[]) {
-    setSentRequests(newList);
-    localStorage.setItem('smartsplit_sent_reqs', JSON.stringify(newList));
-  }
-
   // ── Accept / Reject handlers ────────────────────────────────
   async function handleAccept(reqItem: FriendRequestItem) {
-    const updated = incomingRequests.map((r) =>
-      r.id === reqItem.id ? { ...r, status: 'accepted' as const } : r
-    );
-    updateIncoming(updated);
-
-    // Save to THIS user's friends subcollection
     try {
-      await addFriend(ownerAddress, {
-        address: reqItem.walletAddress || '',
-        nickname: reqItem.name,
-        avatarColor: reqItem.avatarColor,
-        email: reqItem.email,
+      await updateFriendRequest(reqItem.id, 'accepted', {
+        address: ownerAddress,
+        name: myName,
+        avatarColor: myAvatarColor,
+        email: myEffectiveEmail,
       });
+      queryClient.invalidateQueries({ queryKey: ['friend-requests'] });
       queryClient.invalidateQueries({ queryKey: ['friends', ownerAddress] });
     } catch (e) {
-      console.error(e);
+      console.error('Failed to accept friend request:', e);
     }
   }
 
-  function handleReject(reqId: string) {
-    const updated = incomingRequests.map((r) =>
-      r.id === reqId ? { ...r, status: 'rejected' as const } : r
-    );
-    updateIncoming(updated);
+  async function handleReject(reqId: string) {
+    try {
+      await updateFriendRequest(reqId, 'rejected');
+      queryClient.invalidateQueries({ queryKey: ['friend-requests'] });
+    } catch (e) {
+      console.error('Failed to reject friend request:', e);
+    }
   }
 
-  function handleCancelSent(reqId: string) {
-    const updated = sentRequests.filter((r) => r.id !== reqId);
-    updateSent(updated);
+  async function handleCancelSent(reqId: string) {
+    try {
+      await updateFriendRequest(reqId, 'canceled');
+      queryClient.invalidateQueries({ queryKey: ['friend-requests'] });
+    } catch (e) {
+      console.error('Failed to cancel sent request:', e);
+    }
   }
 
   async function handleRemoveFriend(friend: Member) {
@@ -199,46 +168,39 @@ function FriendsPageInner() {
     setSelectedFriend(null);
   }
 
-  // ── Add Friend Mutation (Send Request Only) ──────────────────
+  const normalizedSuinsDomain = suinsInput.trim()
+    ? (suinsInput.trim().toLowerCase().endsWith('.sui') ? suinsInput.trim().toLowerCase() : `${suinsInput.trim().toLowerCase()}.sui`)
+    : '';
+
+  const effectiveFriendName = friendName.trim() || normalizedSuinsDomain;
+
+  const isSelfResolved = Boolean(
+    ownerAddress && suinsResolvedAddr && suinsResolvedAddr.toLowerCase() === ownerAddress.toLowerCase()
+  );
+
+  // ── Add Friend Mutation (Send Request via SuiNS Domain) ─────────
   const addFriendMutation = useMutation({
     mutationFn: async () => {
-      const address = addMethod === 'address' ? walletInput.trim() : '';
-      const email = addMethod === 'gmail' ? gmailInput.trim() : undefined;
-      const nickname = friendName.trim();
-
-      let resolvedAddress = address;
-      if (addMethod === 'gmail' && email) {
-        try {
-          const found = await fetchUsers(email);
-          const match = found.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
-          if (match && match.address) {
-            resolvedAddress = match.address;
-          }
-        } catch (e) {
-          console.warn('Failed to resolve email to address:', e);
-        }
+      if (!suinsResolvedAddr) {
+        throw new Error('Please enter a valid SuiNS domain');
       }
 
-      // Add to sent requests history (pending acceptance by recipient)
-      const newSent: FriendRequestItem = {
-        id: 'sent-' + Date.now(),
-        name: nickname,
-        avatarColor: selectedColor,
-        email: email || (addMethod === 'address' ? (address.length > 14 ? `${address.slice(0, 8)}…` : address) : undefined),
-        walletAddress: resolvedAddress || undefined,
-        timestamp: 'Just now',
-        status: 'sent',
-      };
-      updateSent([newSent, ...sentRequests]);
-
-      // Do NOT call upsertUser here — the recipient must accept the request first!
-      return newSent;
+      await sendFriendRequest({
+        senderAddress: ownerAddress,
+        senderName: myName,
+        senderAvatarColor: selectedColor || myAvatarColor,
+        senderEmail: myEffectiveEmail,
+        senderSuins: mySuiNSName || undefined,
+        recipientAddress: suinsResolvedAddr,
+        recipientName: effectiveFriendName,
+        recipientSuins: normalizedSuinsDomain,
+      });
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['friend-requests'] });
       setShowAddModal(false);
       setFriendName('');
-      setWalletInput('');
-      setGmailInput('');
+      setSuinsInput('');
       setAttemptedAddFriend(false);
       // Automatically switch to Sent Requests tab so user can see it pending
       setActiveTab('sent');
@@ -256,13 +218,12 @@ function FriendsPageInner() {
     setSelectedFriend(null);
   }
 
-  const isAddValid =
-    friendName.trim().length > 0 &&
-    (addMethod === 'address'
-      ? walletInput.trim().length >= 4
-      : addMethod === 'suins'
-      ? suinsInput.trim().length >= 3
-      : gmailInput.includes('@'));
+  const isAddValid = Boolean(
+    suinsResolvedAddr &&
+    suinsResolvedAddr.startsWith('0x') &&
+    !isSelfResolved &&
+    !isSuinsResolving
+  );
 
   const pendingIncomingCount = incomingRequests.filter((r) => r.status === 'pending').length;
 
@@ -486,9 +447,23 @@ function FriendsPageInner() {
                     >
                       <Avatar member={m} />
                       <div className="list-row-content">
-                        <div className="list-row-title">{m.name}</div>
+                        <div className="list-row-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span>{m.name}</span>
+                          {m.suins && (
+                            <span style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              color: 'var(--purple)',
+                              background: 'rgba(159,157,243,0.18)',
+                              padding: '2px 7px',
+                              borderRadius: 6,
+                            }}>
+                              🌐 {m.suins}
+                            </span>
+                          )}
+                        </div>
                         <div className="list-row-sub">
-                          {m.email || 'SmartSplit Friend'}
+                          {m.email || m.suins || 'SmartSplit Friend'}
                         </div>
                       </div>
                       <button
@@ -532,7 +507,21 @@ function FriendsPageInner() {
                   >
                     <Avatar member={{ id: reqItem.id, name: reqItem.name, walletAddress: '', avatarColor: reqItem.avatarColor }} />
                     <div className="list-row-content" style={{ flex: 1, marginLeft: 12 }}>
-                      <div className="list-row-title">{reqItem.name}</div>
+                      <div className="list-row-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>{reqItem.name}</span>
+                        {reqItem.suinsDomain && (
+                          <span style={{
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            color: 'var(--purple)',
+                            background: 'rgba(159,157,243,0.18)',
+                            padding: '2px 7px',
+                            borderRadius: 6,
+                          }}>
+                            🌐 {reqItem.suinsDomain}
+                          </span>
+                        )}
+                      </div>
                       <div className="list-row-sub">
                         {reqItem.email ? `${reqItem.email} · ` : ''}{reqItem.timestamp}
                       </div>
@@ -635,7 +624,21 @@ function FriendsPageInner() {
                   >
                     <Avatar member={{ id: sentItem.id, name: sentItem.name, walletAddress: '', avatarColor: sentItem.avatarColor }} />
                     <div className="list-row-content" style={{ flex: 1, marginLeft: 12 }}>
-                      <div className="list-row-title">{sentItem.name}</div>
+                      <div className="list-row-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>{sentItem.name}</span>
+                        {sentItem.suinsDomain && (
+                          <span style={{
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            color: 'var(--purple)',
+                            background: 'rgba(159,157,243,0.18)',
+                            padding: '2px 7px',
+                            borderRadius: 6,
+                          }}>
+                            🌐 {sentItem.suinsDomain}
+                          </span>
+                        )}
+                      </div>
                       <div className="list-row-sub">
                         {sentItem.email ? `${sentItem.email} · ` : ''}{sentItem.timestamp}
                       </div>
@@ -892,151 +895,107 @@ function FriendsPageInner() {
                   <UserPlusIcon size={22} color="#fff" strokeWidth={2} />
                 </div>
                 <div>
-                  <h3 style={{ fontSize: '1.2rem', lineHeight: 1.2, margin: 0 }}>Add New Friend</h3>
-                  <p className="color-text3 text-xs" style={{ marginTop: 4 }}>Send friend request via Gmail or Sui Address</p>
+                  <h3 style={{ fontSize: '1.2rem', lineHeight: 1.2, margin: 0 }}>Add Friend via SuiNS</h3>
+                  <p className="color-text3 text-xs" style={{ marginTop: 4 }}>Send friend request using a .sui domain name</p>
                 </div>
               </div>
 
-              {/* Method Switcher */}
-              <div className="clay-card flat" style={{
-                display: 'flex', gap: 6, padding: 4, marginBottom: 22,
-                background: 'var(--surface-2)', borderRadius: 14,
-              }}>
-                <button
-                  type="button"
-                  onClick={() => setAddMethod('gmail')}
-                  style={{
-                    flex: 1, padding: '9px 12px', borderRadius: 10, border: 'none',
-                    fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    background: addMethod === 'gmail' ? 'var(--surface)' : 'transparent',
-                    color: addMethod === 'gmail' ? 'var(--deep)' : 'var(--text-3)',
-                    boxShadow: addMethod === 'gmail' ? 'var(--shadow-sm)' : 'none',
-                    transition: 'all 180ms ease',
-                  }}
-                >
-                  <EmailIcon size={16} color={addMethod === 'gmail' ? 'var(--pink)' : 'var(--text-3)'} />
-                  Gmail / Email
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAddMethod('address')}
-                  style={{
-                    flex: 1, padding: '9px 12px', borderRadius: 10, border: 'none',
-                    fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    background: addMethod === 'address' ? 'var(--surface)' : 'transparent',
-                    color: addMethod === 'address' ? 'var(--deep)' : 'var(--text-3)',
-                    boxShadow: addMethod === 'address' ? 'var(--shadow-sm)' : 'none',
-                    transition: 'all 180ms ease',
-                  }}
-                >
-                  <WalletIcon size={16} color={addMethod === 'address' ? 'var(--purple)' : 'var(--text-3)'} />
-                  Sui Address
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAddMethod('suins')}
-                  style={{
-                    flex: 1, padding: '9px 12px', borderRadius: 10, border: 'none',
-                    fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    background: addMethod === 'suins' ? 'var(--surface)' : 'transparent',
-                    color: addMethod === 'suins' ? 'var(--deep)' : 'var(--text-3)',
-                    boxShadow: addMethod === 'suins' ? 'var(--shadow-sm)' : 'none',
-                    transition: 'all 180ms ease',
-                  }}
-                >
-                  🌐 SuiNS (.sui)
-                </button>
-              </div>
+              {/* SuiNS Domain Name (.sui) field */}
+              <div className="form-group" style={{ marginBottom: 20 }}>
+                <label className="form-label">SuiNS Domain Name (.sui) *</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    className="input"
+                    placeholder="e.g. alice.sui or alice"
+                    value={suinsInput}
+                    onChange={(e) => setSuinsInput(e.target.value)}
+                    style={{ paddingRight: 40 }}
+                    autoFocus
+                  />
+                  {isSuinsResolving && (
+                    <div style={{
+                      position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                      display: 'flex', alignItems: 'center'
+                    }}>
+                      <div style={{
+                        width: 16, height: 16, border: '2px solid var(--purple)',
+                        borderTopColor: 'transparent', borderRadius: '50%',
+                        animation: 'spin 1s linear infinite'
+                      }} />
+                    </div>
+                  )}
+                </div>
 
-              {/* Name field */}
-              <div className="form-group" style={{ marginBottom: 22 }}>
-                <label className="form-label">Friend's Name / Nickname *</label>
-                <input
-                  className="input"
-                  placeholder="e.g. Alex Tan"
-                  value={friendName}
-                  onChange={(e) => setFriendName(e.target.value)}
-                  autoFocus
-                />
-                {attemptedAddFriend && !friendName.trim() && (
-                  <p className="text-xs" style={{ color: '#c0392b', marginTop: 4, fontWeight: 500 }}>
-                    * Please enter a name or nickname
+                {/* Resolution status & feedback */}
+                {suinsInput.trim().length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    {isSuinsResolving ? (
+                      <p className="text-xs" style={{ color: 'var(--purple)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>🌐 Resolving domain on Sui testnet…</span>
+                      </p>
+                    ) : suinsResolvedAddr ? (
+                      isSelfResolved ? (
+                        <div style={{
+                          padding: '8px 12px', borderRadius: 10,
+                          background: 'rgba(255, 155, 179, 0.25)',
+                          border: '1.5px solid rgba(192, 57, 43, 0.3)',
+                          color: '#c0392b', fontSize: '0.8rem', fontWeight: 600
+                        }}>
+                          ⚠️ This SuiNS domain belongs to your current account!
+                        </div>
+                      ) : (
+                        <div style={{
+                          padding: '10px 14px', borderRadius: 12,
+                          background: 'rgba(201, 235, 202, 0.45)',
+                          border: '1.5px solid rgba(37, 99, 40, 0.35)',
+                          display: 'flex', flexDirection: 'column', gap: 4
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ color: '#256328', fontWeight: 700, fontSize: '0.82rem' }}>
+                              ✓ SuiNS Domain Resolved
+                            </span>
+                            <span style={{ fontSize: '0.72rem', background: '#256328', color: '#fff', borderRadius: 6, padding: '1px 7px', fontWeight: 700 }}>
+                              On-Chain
+                            </span>
+                          </div>
+                          <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#1b4d1e', wordBreak: 'break-all' }}>
+                            {suinsResolvedAddr}
+                          </span>
+                        </div>
+                      )
+                    ) : (
+                      <div style={{
+                        padding: '8px 12px', borderRadius: 10,
+                        background: 'rgba(255, 155, 179, 0.25)',
+                        border: '1.5px solid rgba(192, 57, 43, 0.3)',
+                        color: '#c0392b', fontSize: '0.8rem', fontWeight: 600
+                      }}>
+                        ⚠️ No active SuiNS domain found for "{normalizedSuinsDomain}". Please check spelling.
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!suinsInput.trim() && (
+                  <p className="text-xs color-text3" style={{ marginTop: 6 }}>
+                    Enter any registered .sui domain name (e.g. wenxuan426.sui)
                   </p>
                 )}
               </div>
 
-              {/* Address, Gmail or SuiNS field */}
-              {addMethod === 'gmail' ? (
-                <div className="form-group" style={{ marginBottom: 22 }}>
-                  <label className="form-label">Gmail / Email Address *</label>
-                  <input
-                    className="input"
-                    type="email"
-                    placeholder="e.g. friend@gmail.com"
-                    value={gmailInput}
-                    onChange={(e) => setGmailInput(e.target.value)}
-                  />
-                  {attemptedAddFriend && !gmailInput.trim() ? (
-                    <p className="text-xs" style={{ color: '#c0392b', marginTop: 4, fontWeight: 500 }}>
-                      * Please enter Gmail / Email address
-                    </p>
-                  ) : attemptedAddFriend && !gmailInput.includes('@') ? (
-                    <p className="text-xs" style={{ color: '#c0392b', marginTop: 4, fontWeight: 500 }}>
-                      * Please include a valid email (e.g. @gmail.com)
-                    </p>
-                  ) : (
-                    <p className="text-xs color-text3" style={{ marginTop: 6 }}>
-                      Send an instant friend request to their email
-                    </p>
-                  )}
-                </div>
-              ) : addMethod === 'suins' ? (
-                <div className="form-group" style={{ marginBottom: 22 }}>
-                  <label className="form-label">SuiNS Domain Name (.sui) *</label>
-                  <input
-                    className="input"
-                    placeholder="e.g. alice.sui"
-                    value={suinsInput}
-                    onChange={(e) => setSuinsInput(e.target.value)}
-                  />
-                  {suinsInput.trim().length > 0 && (
-                    <p className="text-xs mt-6" style={{ color: suinsResolvedAddr ? '#256328' : 'var(--text-3)', fontWeight: 600 }}>
-                      {isSuinsResolving
-                        ? 'Resolving SuiNS domain…'
-                        : suinsResolvedAddr
-                        ? `✓ Resolved Address: ${suinsResolvedAddr.slice(0, 16)}…`
-                        : 'No SuiNS domain record found'}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="form-group" style={{ marginBottom: 22 }}>
-                  <label className="form-label">Sui Wallet Address (0x...) *</label>
-                  <input
-                    className="input"
-                    placeholder="0x78aae4fcc5c0a97dde78eb6afcb91baf8b999..."
-                    value={walletInput}
-                    onChange={(e) => setWalletInput(e.target.value)}
-                    style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
-                  />
-                  {attemptedAddFriend && !walletInput.trim() ? (
-                    <p className="text-xs" style={{ color: '#c0392b', marginTop: 4, fontWeight: 500 }}>
-                      * Please enter Sui wallet address
-                    </p>
-                  ) : attemptedAddFriend && walletInput.trim().length < 10 ? (
-                    <p className="text-xs" style={{ color: '#c0392b', marginTop: 4, fontWeight: 500 }}>
-                      * Address is too short (must be valid 0x hex address)
-                    </p>
-                  ) : (
-                    <p className="text-xs color-text3" style={{ marginTop: 6 }}>
-                      Enter their 64-hex-character Sui testnet address
-                    </p>
-                  )}
-                </div>
-              )}
+              {/* Friend's Name / Nickname field */}
+              <div className="form-group" style={{ marginBottom: 22 }}>
+                <label className="form-label">Friend's Nickname (Optional)</label>
+                <input
+                  className="input"
+                  placeholder={
+                    suinsInput.trim()
+                      ? `e.g. ${suinsInput.trim().replace(/\.sui$/, '')}`
+                      : 'e.g. Alex (defaults to domain name)'
+                  }
+                  value={friendName}
+                  onChange={(e) => setFriendName(e.target.value)}
+                />
+              </div>
 
               {/* Avatar color picker */}
               <div className="form-group" style={{ marginBottom: 26 }}>
@@ -1081,7 +1040,12 @@ function FriendsPageInner() {
                 <button
                   type="button"
                   className="btn btn-primary flex-1"
-                  disabled={addFriendMutation.isPending}
+                  disabled={
+                    addFriendMutation.isPending ||
+                    isSuinsResolving ||
+                    !suinsResolvedAddr ||
+                    isSelfResolved
+                  }
                   onClick={() => {
                     setAttemptedAddFriend(true);
                     if (isAddValid) {
@@ -1092,10 +1056,15 @@ function FriendsPageInner() {
                     background: 'linear-gradient(135deg, var(--pink), #e0607e)',
                     borderColor: 'transparent',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    opacity: (isSuinsResolving || !suinsResolvedAddr || isSelfResolved) ? 0.65 : 1,
                   }}
                 >
                   <CheckIcon size={15} color="#fff" strokeWidth={2.4} />
-                  {addFriendMutation.isPending ? 'Sending…' : 'Send Request'}
+                  {addFriendMutation.isPending
+                    ? 'Sending…'
+                    : isSuinsResolving
+                    ? 'Resolving SuiNS…'
+                    : 'Send Request'}
                 </button>
               </div>
             </motion.div>

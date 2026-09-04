@@ -62,7 +62,7 @@ export function Header() {
   // Display username prioritizing custom nickname, Google/wallet name, or SuiNS
   const displayUsername =
     localNickname.trim() ||
-    (activeAccount?.isZk ? activeAccount.name : (suinsName || activeAccount?.label)) ||
+    (activeAccount?.isZk ? activeAccount.name : (suinsName || zkAccount?.name || activeAccount?.label)) ||
     (activeAccount ? shortAddress(activeAccount.address) : '');
 
   return (
@@ -94,7 +94,7 @@ export function Header() {
           {activeAccount ? (
             <>
               <div className="wallet-pill" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                {activeAccount.isZk && zkAccount?.picture ? (
+                {zkAccount?.picture ? (
                   <img
                     src={zkAccount.picture}
                     alt="Google avatar"
@@ -102,7 +102,7 @@ export function Header() {
                   />
                 ) : (
                   <Avatar
-                    name={activeAccount.address}
+                    name={displayUsername || activeAccount.address}
                     color="#9F9DF3"
                     size="sm"
                     style={{ width: 24, height: 24, fontSize: '0.6rem' }}

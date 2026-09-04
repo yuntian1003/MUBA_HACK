@@ -26,6 +26,7 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 const memoryPaymentRequests = new Map<string, any>();
+const memoryFriendRequests = new Map<string, any>();
 
 const app = express();
 app.use(cors());
@@ -60,7 +61,7 @@ app.get('/api/users/:address', async (req, res) => {
 // Create or update a user profile (merge = true)
 app.post('/api/users', async (req, res) => {
   try {
-    let { address, nickname, avatarColor, email } = req.body;
+    let { address, nickname, avatarColor, email, linkedZkAddress, linkedWalletAddress } = req.body;
     if (!address && !email) return res.status(400).json({ error: 'Address or email required' });
 
     // If only email is provided or address is empty, generate a valid deterministic mock address based on email
@@ -69,16 +70,38 @@ app.post('/api/users', async (req, res) => {
       address = '0x' + hash;
     }
 
-    await db.collection('users').doc(address).set(
-      {
-        address,
-        nickname: nickname || (email ? email.split('@')[0] : 'Friend'),
-        avatarColor: avatarColor || '#9F9DF3',
-        email: email || '',
-      },
-      { merge: true }
-    );
-    res.json({ success: true, address, nickname, email });
+    const normAddress = address.toLowerCase().trim();
+    const finalEmail = email ? email.toLowerCase().trim() : '';
+
+    const userData: any = {
+      address: normAddress,
+      nickname: nickname || (email ? email.split('@')[0] : 'Friend'),
+      avatarColor: avatarColor || '#9F9DF3',
+      email: finalEmail,
+    };
+
+    if (linkedZkAddress) {
+      userData.linkedZkAddress = linkedZkAddress.toLowerCase().trim();
+    }
+    if (linkedWalletAddress) {
+      userData.linkedWalletAddress = linkedWalletAddress.toLowerCase().trim();
+    }
+
+    await db.collection('users').doc(normAddress).set(userData, { merge: true });
+
+    // If linkedZkAddress is supplied, also set linkedWalletAddress on that zkLogin document
+    if (linkedZkAddress && linkedZkAddress.toLowerCase().trim() !== normAddress) {
+      const zkNorm = linkedZkAddress.toLowerCase().trim();
+      await db.collection('users').doc(zkNorm).set({
+        address: zkNorm,
+        linkedWalletAddress: normAddress,
+        nickname: userData.nickname,
+        avatarColor: userData.avatarColor,
+        email: finalEmail,
+      }, { merge: true });
+    }
+
+    res.json({ success: true, ...userData });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to upsert user' });
@@ -199,7 +222,8 @@ app.get('/api/users/:owner/friends', async (req, res) => {
       friends = friends.filter((f: any) =>
         (f.nickname && f.nickname.toLowerCase().includes(q)) ||
         (f.address && f.address.toLowerCase().includes(q)) ||
-        (f.email && f.email.toLowerCase().includes(q))
+        (f.email && f.email.toLowerCase().includes(q)) ||
+        (f.suins && f.suins.toLowerCase().includes(q))
       );
     }
     res.json(friends);
@@ -213,7 +237,7 @@ app.get('/api/users/:owner/friends', async (req, res) => {
 app.post('/api/users/:owner/friends', async (req, res) => {
   try {
     const owner = req.params.owner.toLowerCase().trim();
-    let { address, nickname, avatarColor, email } = req.body;
+    let { address, nickname, avatarColor, email, suins } = req.body;
     if (!address && !email) return res.status(400).json({ error: 'address or email required' });
     if (!address && email) {
       const hash = Buffer.from(email).toString('hex').padEnd(64, '0').slice(0, 64);
@@ -222,9 +246,10 @@ app.post('/api/users/:owner/friends', async (req, res) => {
     address = address.toLowerCase().trim();
     const friendData = {
       address,
-      nickname: nickname || (email ? email.split('@')[0] : 'Friend'),
+      nickname: nickname || (email ? email.split('@')[0] : (suins || 'Friend')),
       avatarColor: avatarColor || '#9F9DF3',
       email: email || '',
+      suins: suins || '',
     };
     await db.collection('users').doc(owner).collection('friends').doc(address).set(friendData, { merge: true });
     res.json({ success: true, ...friendData });
@@ -335,6 +360,230 @@ app.patch('/api/payment-requests/:id', async (req, res) => {
   } catch (e) {
     console.error('Error updating payment request:', e);
     res.status(500).json({ error: 'Failed to update payment request' });
+  }
+});
+
+// ------------------- Friend Requests API -------------------
+// Create a friend request
+app.post('/api/friend-requests', async (req, res) => {
+  try {
+    const {
+      senderAddress,
+      senderName,
+      senderAvatarColor,
+      senderEmail,
+      senderSuins,
+      recipientAddress,
+      recipientEmail,
+      recipientName,
+      recipientSuins,
+    } = req.body;
+
+    if (!senderAddress) {
+      return res.status(400).json({ error: 'senderAddress is required' });
+    }
+    if (!recipientAddress && !recipientEmail) {
+      return res.status(400).json({ error: 'recipientAddress or recipientEmail is required' });
+    }
+
+    const id = 'freq_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+
+    let finalRecipientAddress = (recipientAddress || '').toLowerCase().trim();
+    let finalRecipientEmail = (recipientEmail || '').toLowerCase().trim();
+    const finalSenderAddress = senderAddress.toLowerCase().trim();
+    const finalSenderEmail = (senderEmail || '').toLowerCase().trim();
+
+    // Try to resolve recipient address if missing and email given
+    if (!finalRecipientAddress && finalRecipientEmail) {
+      try {
+        const usersSnap = await db.collection('users').where('email', '==', finalRecipientEmail).get();
+        if (!usersSnap.empty) {
+          finalRecipientAddress = usersSnap.docs[0].id.toLowerCase();
+        }
+      } catch (e) {
+        console.warn('Could not lookup recipient by email:', e);
+      }
+    }
+
+    // Also try to resolve recipient email if missing and address given
+    if (finalRecipientAddress && !finalRecipientEmail) {
+      try {
+        const userDoc = await db.collection('users').doc(finalRecipientAddress).get();
+        if (userDoc.exists && userDoc.data()?.email) {
+          finalRecipientEmail = userDoc.data()!.email.toLowerCase().trim();
+        }
+      } catch (e) {
+        console.warn('Could not lookup recipient email by address:', e);
+      }
+    }
+
+    if (finalRecipientAddress && finalRecipientAddress === finalSenderAddress) {
+      return res.status(400).json({ error: 'Cannot send friend request to yourself' });
+    }
+    if (finalRecipientEmail && finalSenderEmail && finalRecipientEmail === finalSenderEmail) {
+      return res.status(400).json({ error: 'Cannot send friend request to yourself' });
+    }
+
+    const data: any = {
+      id,
+      senderAddress: finalSenderAddress,
+      senderName: senderName || 'Friend',
+      senderAvatarColor: senderAvatarColor || '#9F9DF3',
+      senderEmail: finalSenderEmail || '',
+      senderSuins: senderSuins || '',
+      recipientAddress: finalRecipientAddress || '',
+      recipientEmail: finalRecipientEmail || '',
+      recipientName: recipientName || 'Friend',
+      recipientSuins: recipientSuins || '',
+      status: 'pending',
+      createdAt: Date.now(),
+    };
+
+    if (hasFirebaseCredentials) {
+      await db.collection('friend_requests').doc(id).set(data);
+    } else {
+      memoryFriendRequests.set(id, data);
+    }
+
+    res.json({ success: true, request: data });
+  } catch (e) {
+    console.error('Error creating friend request:', e);
+    res.status(500).json({ error: 'Failed to create friend request' });
+  }
+});
+
+// Get friend requests for a user (incoming requests received, and outgoing requests sent)
+app.get('/api/friend-requests', async (req, res) => {
+  try {
+    const address = (req.query.address as string || '').toLowerCase().trim();
+    const email = (req.query.email as string || '').toLowerCase().trim();
+
+    const all: any[] = hasFirebaseCredentials
+      ? (await db.collection('friend_requests').get()).docs.map(d => d.data())
+      : Array.from(memoryFriendRequests.values());
+
+    if (!address && !email) {
+      return res.json({ incoming: [], outgoing: [] });
+    }
+
+    // Gather all addresses & emails for this user (including linked addresses/email from their user profile)
+    const myAddresses = new Set<string>();
+    const myEmails = new Set<string>();
+    if (address) myAddresses.add(address);
+    if (email) myEmails.add(email);
+
+    if (address && hasFirebaseCredentials) {
+      try {
+        const userDoc = await db.collection('users').doc(address).get();
+        if (userDoc.exists) {
+          const u = userDoc.data() || {};
+          if (u.email) myEmails.add(u.email.toLowerCase().trim());
+          if (u.linkedZkAddress) myAddresses.add(u.linkedZkAddress.toLowerCase().trim());
+          if (u.linkedWalletAddress) myAddresses.add(u.linkedWalletAddress.toLowerCase().trim());
+        }
+      } catch (err) {
+        console.warn('Could not fetch linked addresses for friend requests query:', err);
+      }
+    }
+
+    const incoming = all
+      .filter((r: any) => {
+        const rAddr = r.recipientAddress?.toLowerCase();
+        const rMail = r.recipientEmail?.toLowerCase();
+        const isRecipient =
+          (rAddr && myAddresses.has(rAddr)) ||
+          (rMail && myEmails.has(rMail));
+        const sAddr = r.senderAddress?.toLowerCase();
+        const isSelf = sAddr && myAddresses.has(sAddr);
+        return isRecipient && !isSelf && r.status !== 'canceled';
+      })
+      .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    const outgoing = all
+      .filter((r: any) => {
+        const sAddr = r.senderAddress?.toLowerCase();
+        const sMail = r.senderEmail?.toLowerCase();
+        const isSender =
+          (sAddr && myAddresses.has(sAddr)) ||
+          (sMail && myEmails.has(sMail));
+        return isSender && r.status !== 'canceled';
+      })
+      .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    res.json({ incoming, outgoing });
+  } catch (e) {
+    console.error('Error fetching friend requests:', e);
+    res.status(500).json({ error: 'Failed to fetch friend requests' });
+  }
+});
+
+// Update friend request status (accept, reject, cancel)
+app.patch('/api/friend-requests/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, recipientAddress, recipientName, recipientAvatarColor, recipientEmail } = req.body;
+    if (!status) return res.status(400).json({ error: 'Status required' });
+
+    let existing: any = null;
+    if (hasFirebaseCredentials) {
+      const doc = await db.collection('friend_requests').doc(id).get();
+      if (doc.exists) existing = doc.data();
+    } else {
+      existing = memoryFriendRequests.get(id);
+    }
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Friend request not found' });
+    }
+
+    const updated = {
+      ...existing,
+      status,
+      updatedAt: Date.now(),
+      ...(recipientAddress ? { recipientAddress: recipientAddress.toLowerCase().trim() } : {}),
+    };
+
+    if (hasFirebaseCredentials) {
+      await db.collection('friend_requests').doc(id).set(updated, { merge: true });
+    } else {
+      memoryFriendRequests.set(id, updated);
+    }
+
+    // If accepted, add both users to each other's friends subcollection (bidirectional friendship)
+    if (status === 'accepted') {
+      const sAddr = (existing.senderAddress || '').toLowerCase().trim();
+      const rAddr = (recipientAddress || existing.recipientAddress || '').toLowerCase().trim();
+
+      if (sAddr && rAddr && sAddr !== rAddr) {
+        const sFriendData = {
+          address: sAddr,
+          nickname: existing.senderName || 'Friend',
+          avatarColor: existing.senderAvatarColor || '#9F9DF3',
+          email: existing.senderEmail || '',
+          suins: existing.senderSuins || '',
+        };
+
+        const rFriendData = {
+          address: rAddr,
+          nickname: recipientName || existing.recipientName || 'Friend',
+          avatarColor: recipientAvatarColor || '#C9EBCA',
+          email: recipientEmail || existing.recipientEmail || '',
+          suins: existing.recipientSuins || '',
+        };
+
+        if (hasFirebaseCredentials) {
+          await Promise.all([
+            db.collection('users').doc(rAddr).collection('friends').doc(sAddr).set(sFriendData, { merge: true }),
+            db.collection('users').doc(sAddr).collection('friends').doc(rAddr).set(rFriendData, { merge: true }),
+          ]);
+        }
+      }
+    }
+
+    res.json({ success: true, request: updated });
+  } catch (e) {
+    console.error('Error updating friend request:', e);
+    res.status(500).json({ error: 'Failed to update friend request' });
   }
 });
 

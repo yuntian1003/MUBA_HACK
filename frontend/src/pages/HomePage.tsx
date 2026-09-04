@@ -9,7 +9,7 @@ import {
   ShieldIcon, GlobeIcon, BoltIcon, CoinIcon,
   PayIcon, AlertCircleIcon, CheckCircleIcon, LinkIcon,
 } from '../components/Icons';
-import { fetchPaymentRequests, updatePaymentRequest } from '../api';
+import { fetchPaymentRequests, updatePaymentRequest, fetchCommunities, fetchFriends } from '../api';
 import { usePayRequest } from '../hooks/usePayRequest';
 import { useZkLogin } from '../hooks/useZkLogin';
 import type { PaymentRequest } from '../types';
@@ -137,6 +137,23 @@ export function HomePage() {
     enabled: !!account?.address,
     refetchInterval: 8000,
   });
+
+  const { data: userCommunities = [] } = useQuery({
+    queryKey: ['communities', account?.address],
+    queryFn: () => fetchCommunities(account?.address || ''),
+    enabled: !!account?.address,
+  });
+
+  const { data: userFriends = [] } = useQuery({
+    queryKey: ['friends', account?.address],
+    queryFn: () => fetchFriends(account?.address || ''),
+    enabled: !!account?.address,
+  });
+
+  const splitsCreatedCount = (payRequests.outgoing || []).length;
+  const communitiesCount = userCommunities.length;
+  const friendsCount = userFriends.length;
+  const timeSaved = splitsCreatedCount > 0 ? `${splitsCreatedCount * 5}m` : '0m';
 
   const incomingRequests: PaymentRequest[] = payRequests.incoming || [];
 
@@ -483,12 +500,17 @@ export function HomePage() {
         <p className="section-title">QUICK STATS</p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           {[
-            { label: 'Splits created', value: '0',      Icon: SplitIcon,     color: '#9F9DF3' },
-            { label: 'Communities',    value: '3',      Icon: CommunityIcon, color: '#FF9BB3' },
-            { label: 'Friends',        value: '6',      Icon: FriendsIcon,   color: '#C9EBCA' },
-            { label: 'Time saved',     value: 'Lots',   Icon: BoltIcon,      color: '#D5D6F2' },
-          ].map(({ label, value, Icon, color }) => (
-            <div key={label} className="clay-card flat" style={{ padding: '16px 18px' }}>
+            { label: 'Splits created', value: String(splitsCreatedCount), Icon: SplitIcon,     color: '#9F9DF3', path: '/split' },
+            { label: 'Communities',    value: String(communitiesCount),    Icon: CommunityIcon, color: '#FF9BB3', path: '/community' },
+            { label: 'Friends',        value: String(friendsCount),        Icon: FriendsIcon,   color: '#C9EBCA', path: '/friends' },
+            { label: 'Time saved',     value: timeSaved,                   Icon: BoltIcon,      color: '#D5D6F2', path: '/split' },
+          ].map(({ label, value, Icon, color, path }) => (
+            <div
+              key={label}
+              className="clay-card flat"
+              onClick={() => navigate(path)}
+              style={{ padding: '16px 18px', cursor: 'pointer', transition: 'all 180ms ease' }}
+            >
               <div style={{ marginBottom: 8 }}>
                 <Icon size={20} color={color} strokeWidth={2} />
               </div>

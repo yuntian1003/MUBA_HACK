@@ -14,10 +14,9 @@ import {
 import { useSplitTransaction } from '../hooks/useSplitTransaction';
 import { useSuiNSAddress } from '../hooks/useSuiNS';
 import { useZkLogin } from '../hooks/useZkLogin';
-import { DEMO_MEMBERS, DEMO_COMMUNITIES } from '../constants';
-import { fetchUsers, createPaymentRequests } from '../api';
-import { apiUserToMember } from '../types';
-import type { Member } from '../types';
+import { fetchUsers, createPaymentRequests, fetchCommunities, fetchFriends } from '../api';
+import { apiUserToMember, apiCommunityToFrontend } from '../types';
+import type { Member, Community } from '../types';
 import { uploadToWalrus, type WalrusUpload } from '../walrus';
 import { detectReceiptAmount, type ReceiptAmount } from '../receiptOcr';
 
@@ -79,6 +78,32 @@ export function SplitPage() {
   const [requestSent, setRequestSent] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
 
+  const ownerAddress = (account?.address || '').toLowerCase();
+
+  // ── Fetch friends from backend ────────────────────────────────
+  const { data: rawFriends = [] } = useQuery({
+    queryKey: ['friends', ownerAddress],
+    queryFn: () => fetchFriends(ownerAddress),
+    enabled: !!ownerAddress,
+    staleTime: 15_000,
+  });
+
+  // ── Fetch communities from backend ────────────────────────────
+  const { data: rawCommunities = [] } = useQuery({
+    queryKey: ['communities', ownerAddress],
+    queryFn: () => fetchCommunities(ownerAddress),
+    enabled: !!ownerAddress,
+    staleTime: 15_000,
+  });
+
+  const communities: Community[] = useMemo(() => {
+    const list: Community[] = rawCommunities.map(apiCommunityToFrontend);
+    if (locationState?.preselectedCommunity && !list.some((c) => c.id === locationState.preselectedCommunity.id)) {
+      list.unshift(locationState.preselectedCommunity);
+    }
+    return list;
+  }, [rawCommunities, locationState?.preselectedCommunity]);
+
   // ── Fetch users from backend ──────────────────────────────────
   const { data: rawUsers = [] } = useQuery({
     queryKey: ['users'],
@@ -87,23 +112,35 @@ export function SplitPage() {
   });
 
   const allMembers = useMemo(() => {
-    const backendMembers: Member[] = rawUsers
-      .filter((u: any) => !account?.address || u.address?.toLowerCase() !== account.address.toLowerCase())
-      .map(apiUserToMember);
     const map = new Map<string, Member>();
 
+    // 1. User's friends first
+    rawFriends.forEach((f: any) => {
+      const m = apiUserToMember(f);
+      if (!ownerAddress || m.walletAddress.toLowerCase() !== ownerAddress) {
+        map.set(m.id, m);
+      }
+    });
+
+    // 2. Preselected member from navigation if any
     if (locationState?.preselectedMember) {
-      if (!account?.address || locationState.preselectedMember.walletAddress?.toLowerCase() !== account.address.toLowerCase()) {
+      if (!ownerAddress || locationState.preselectedMember.walletAddress?.toLowerCase() !== ownerAddress) {
         map.set(locationState.preselectedMember.id, locationState.preselectedMember);
       }
     }
-    backendMembers.forEach((m) => map.set(m.id, m));
-    DEMO_MEMBERS.forEach((m) => {
-      if (!map.has(m.id)) map.set(m.id, m);
-    });
+
+    // 3. Other registered backend users
+    rawUsers
+      .filter((u: any) => !ownerAddress || u.address?.toLowerCase() !== ownerAddress)
+      .forEach((u: any) => {
+        const m = apiUserToMember(u);
+        if (!map.has(m.id)) {
+          map.set(m.id, m);
+        }
+      });
 
     return Array.from(map.values());
-  }, [rawUsers, locationState, account?.address]);
+  }, [rawFriends, rawUsers, locationState, ownerAddress]);
 
   // Preselect friend if navigated from Friends page
   const [selected, setSelected] = useState<Member[]>(() => {
@@ -168,7 +205,7 @@ export function SplitPage() {
   function toggleMember(m: Member) {
     if (m.id === lockedMemberId) return;
     if (lockedCommunityId) {
-      const lockedComm = DEMO_COMMUNITIES.find((c) => c.id === lockedCommunityId);
+      const lockedComm = communities.find((c) => c.id === lockedCommunityId);
       if (lockedComm?.members.some((cm) => cm.id === m.id)) return;
     }
     if (isSelected(m)) setSelected((prev) => prev.filter((s) => s.id !== m.id));
@@ -181,7 +218,7 @@ export function SplitPage() {
 
   function toggleCommunity(id: string) {
     if (id === lockedCommunityId) return; // Cannot cancel locked source community
-    const community = DEMO_COMMUNITIES.find((c) => c.id === id);
+    const community = communities.find((c) => c.id === id);
     if (!community) return;
 
     if (selectedCommunityIds.includes(id)) {
@@ -193,12 +230,12 @@ export function SplitPage() {
       const remainingCommunityMemberIds = new Set<string>();
       if (lockedMemberId) remainingCommunityMemberIds.add(lockedMemberId);
       if (lockedCommunityId) {
-        DEMO_COMMUNITIES.find((c) => c.id === lockedCommunityId)?.members.forEach((m) =>
+        communities.find((c) => c.id === lockedCommunityId)?.members.forEach((m) =>
           remainingCommunityMemberIds.add(m.id)
         );
       }
       nextCommunityIds.forEach((cid) => {
-        const comm = DEMO_COMMUNITIES.find((c) => c.id === cid);
+        const comm = communities.find((c) => c.id === cid);
         comm?.members.forEach((m) => remainingCommunityMemberIds.add(m.id));
       });
 
@@ -377,41 +414,45 @@ export function SplitPage() {
             exit={{ opacity: 0, x: -30 }}
             transition={{ duration: 0.25 }}
           >
-            <p className="section-title" style={{ marginBottom: 8 }}>QUICK ADD FROM COMMUNITY</p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
-              {DEMO_COMMUNITIES.map((c) => {
-                const active = isCommunitySelected(c.id);
-                const isLocked = c.id === lockedCommunityId;
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() => toggleCommunity(c.id)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '7px 14px',
-                      border: `1.5px solid ${active ? 'var(--purple)' : 'var(--border)'}`,
-                      borderRadius: 'var(--r-full)',
-                      background: active ? 'var(--purple)' : 'var(--surface-2)',
-                      color: active ? '#fff' : 'var(--text-2)',
-                      fontFamily: 'Outfit, sans-serif',
-                      fontWeight: 600,
-                      fontSize: '0.87rem',
-                      cursor: isLocked ? 'default' : 'pointer',
-                      opacity: isLocked ? 0.9 : 1,
-                      transition: 'all 200ms',
-                    }}
-                  >
-                    <CommunityIcon
-                      size={14}
-                      color={active ? '#fff' : 'var(--text-3)'}
-                      strokeWidth={2}
-                    />
-                    {c.name}
-                    {isLocked && <LockIcon size={12} color="currentColor" strokeWidth={2.4} />}
-                  </button>
-                );
-              })}
-            </div>
+            {communities.length > 0 && (
+              <>
+                <p className="section-title" style={{ marginBottom: 8 }}>QUICK ADD FROM COMMUNITY</p>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+                  {communities.map((c) => {
+                    const active = isCommunitySelected(c.id);
+                    const isLocked = c.id === lockedCommunityId;
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => toggleCommunity(c.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          padding: '7px 14px',
+                          border: `1.5px solid ${active ? 'var(--purple)' : 'var(--border)'}`,
+                          borderRadius: 'var(--r-full)',
+                          background: active ? 'var(--purple)' : 'var(--surface-2)',
+                          color: active ? '#fff' : 'var(--text-2)',
+                          fontFamily: 'Outfit, sans-serif',
+                          fontWeight: 600,
+                          fontSize: '0.87rem',
+                          cursor: isLocked ? 'default' : 'pointer',
+                          opacity: isLocked ? 0.9 : 1,
+                          transition: 'all 200ms',
+                        }}
+                      >
+                        <CommunityIcon
+                          size={14}
+                          color={active ? '#fff' : 'var(--text-3)'}
+                          strokeWidth={2}
+                        />
+                        {c.name}
+                        {isLocked && <LockIcon size={12} color="currentColor" strokeWidth={2.4} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
 
             <div className="form-group" style={{ marginBottom: 16 }}>
               <label className="form-label">Search by name, phone or SuiNS (.sui)</label>
@@ -473,7 +514,7 @@ export function SplitPage() {
                 const isLocked =
                   m.id === lockedMemberId ||
                   (lockedCommunityId &&
-                    DEMO_COMMUNITIES.find((c) => c.id === lockedCommunityId)?.members.some((cm) => cm.id === m.id));
+                    communities.find((c) => c.id === lockedCommunityId)?.members.some((cm) => cm.id === m.id));
 
                 return (
                   <motion.div
@@ -534,7 +575,7 @@ export function SplitPage() {
                     const isLocked =
                       m.id === lockedMemberId ||
                       (lockedCommunityId &&
-                        DEMO_COMMUNITIES.find((c) => c.id === lockedCommunityId)?.members.some((cm) => cm.id === m.id));
+                        communities.find((c) => c.id === lockedCommunityId)?.members.some((cm) => cm.id === m.id));
 
                     return (
                       <span key={m.id} className="chip">

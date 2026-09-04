@@ -135,9 +135,19 @@ export function RequireAuth({ children, pageName = 'this page' }: RequireAuthPro
       return;
     }
 
-    // zkLogin users already have their email verified by Google
-    if (isZk && zkAccount?.email) {
+    // If user has a verified Google zkLogin account, auto-link email and nickname to connected wallet!
+    if (zkAccount?.email) {
       localStorage.setItem(`email-${activeAddress}`, zkAccount.email);
+      if (zkAccount.name && !localStorage.getItem(`nickname-${activeAddress}`)) {
+        localStorage.setItem(`nickname-${activeAddress}`, zkAccount.name);
+      }
+      upsertUser(
+        activeAddress,
+        zkAccount.name || activeAddress.slice(0, 8),
+        '#9F9DF3',
+        zkAccount.email,
+        { linkedZkAddress: zkAccount.address }
+      ).catch(console.error);
       setEmailMissing(false);
       return;
     }

@@ -6,6 +6,7 @@ export interface ApiUser {
   nickname: string | null;
   avatarColor: string;
   email?: string;
+  suins?: string;
 }
 
 export interface ApiCommunity {
@@ -32,16 +33,18 @@ export interface Member {
   avatarColor: string;
   email?: string;
   phone?: string;
+  suins?: string;
 }
 
 // Utility to map an ApiUser → frontend Member
 export function apiUserToMember(u: ApiUser): Member {
   return {
     id: u.address,
-    name: u.nickname || (u.email ? u.email.split('@')[0] : u.address.slice(0, 8) + '…'),
+    name: u.nickname || (u.email ? u.email.split('@')[0] : (u.suins || u.address.slice(0, 8) + '…')),
     walletAddress: u.address,
     avatarColor: u.avatarColor || '#9F9DF3',
     email: u.email,
+    suins: u.suins,
   };
 }
 

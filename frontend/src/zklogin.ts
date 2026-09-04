@@ -93,17 +93,35 @@ export function clearZkSession() {
 
 /**
  * Get or create persistent user salt
+ * Sui zkLogin requires the salt to be a 16-byte (128-bit) unsigned integer,
+ * represented as a decimal string (< 2^128).
  */
 export function getOrCreateUserSalt(): string {
   let salt = localStorage.getItem(STORAGE_KEYS.SALT);
-  if (!salt) {
-    // Generate a secure 16-byte numeric salt string
-    const randomArray = new Uint8Array(16);
-    crypto.getRandomValues(randomArray);
-    salt = Array.from(randomArray).map((b) => b.toString(10)).join('');
+
+  // Validate that salt is a valid 16-byte (128-bit) integer string
+  const isValidSalt = (s: string | null): boolean => {
+    if (!s || !/^\d+$/.test(s)) return false;
+    try {
+      const val = BigInt(s);
+      return val >= 0n && val < (1n << 128n);
+    } catch {
+      return false;
+    }
+  };
+
+  if (!isValidSalt(salt)) {
+    // Generate a secure 16-byte (128-bit) numeric salt string
+    const randomBytes = new Uint8Array(16);
+    crypto.getRandomValues(randomBytes);
+    let hex = '0x';
+    for (let i = 0; i < randomBytes.length; i++) {
+      hex += randomBytes[i].toString(16).padStart(2, '0');
+    }
+    salt = BigInt(hex).toString(10);
     localStorage.setItem(STORAGE_KEYS.SALT, salt);
   }
-  return salt;
+  return salt!;
 }
 
 /**

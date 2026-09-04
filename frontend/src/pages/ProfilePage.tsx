@@ -11,9 +11,20 @@ import {
   LinkIcon, EmptyBoxIcon, EmailIcon,
 } from '../components/Icons';
 import { AVATAR_COLORS } from '../constants';
-import { upsertUser, fetchUser } from '../api';
+import { upsertUser, fetchUser, fetchUsers } from '../api';
 import { useSuiNSName } from '../hooks/useSuiNS';
 import { useZkLogin } from '../hooks/useZkLogin';
+
+function GoogleLogo({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+    </svg>
+  );
+}
 
 export function ProfilePage() {
   const walletAccount = useCurrentAccount();
@@ -29,26 +40,71 @@ export function ProfilePage() {
   const { data: suinsDomainName } = useSuiNSName(account?.address);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
+  const [linkedZkAddress, setLinkedZkAddress] = useState('');
+  const [linkedWalletAddress, setLinkedWalletAddress] = useState('');
   const [editing, setEditing] = useState(false);
   const [attemptedSaveName, setAttemptedSaveName] = useState(false);
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
   const [copied, setCopied] = useState(false);
+  const [copiedZk, setCopiedZk] = useState(false);
   const [saveMsg, setSaveMsg] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   useEffect(() => {
-    if (account) {
-      setDisplayName(localStorage.getItem(`nickname-${account.address}`) || account.label || '');
-      setEmail(localStorage.getItem(`email-${account.address}`) || '');
-      // Also sync from backend
-      fetchUser(account.address).then((u) => {
-        if (u) {
-          if (u.nickname) setDisplayName(u.nickname);
-          if (u.email) setEmail(u.email);
-          if (u.avatarColor) setSelectedColor(u.avatarColor);
+    if (!account) return;
+
+    const localNick = localStorage.getItem(`nickname-${account.address}`);
+    const localEmail = localStorage.getItem(`email-${account.address}`);
+
+    // If nickname/email not set on this wallet address yet, inherit from Google zkAccount!
+    const initialName = localNick || zkAccount?.name || account.label || '';
+    const initialEmail = localEmail || zkAccount?.email || '';
+
+    setDisplayName(initialName);
+    setEmail(initialEmail);
+
+    // Sync from backend
+    fetchUser(account.address).then(async (u) => {
+      let currentEmail = initialEmail;
+      let foundZk = '';
+      let foundWallet = '';
+
+      if (u) {
+        if (u.nickname) setDisplayName(u.nickname);
+        else if (initialName) setDisplayName(initialName);
+
+        if (u.email) {
+          setEmail(u.email);
+          currentEmail = u.email;
+        } else if (initialEmail) setEmail(initialEmail);
+
+        if (u.avatarColor) setSelectedColor(u.avatarColor);
+        if (u.linkedZkAddress) foundZk = u.linkedZkAddress;
+        if (u.linkedWalletAddress) foundWallet = u.linkedWalletAddress;
+      }
+
+      // Auto-link if same email has a zkLogin account
+      if (!foundZk && currentEmail) {
+        try {
+          const users = await fetchUsers(currentEmail);
+          const match = users.find((mu: any) =>
+            mu.email?.toLowerCase() === currentEmail.toLowerCase() &&
+            mu.address?.toLowerCase() !== account.address.toLowerCase()
+          );
+          if (match && match.address) {
+            foundZk = match.address;
+            upsertUser(account.address, displayName || initialName || 'Friend', AVATAR_COLORS[0], currentEmail, {
+              linkedZkAddress: match.address,
+            }).catch(console.error);
+          }
+        } catch (e) {
+          console.warn('Auto-link error:', e);
         }
-      }).catch(console.error);
-    }
-  }, [account]);
+      }
+
+      setLinkedZkAddress(foundZk || zkAccount?.address || '');
+      setLinkedWalletAddress(foundWallet || (walletAccount?.address !== account.address ? (walletAccount?.address || '') : ''));
+    }).catch(console.error);
+  }, [account?.address, zkAccount]);
 
   async function handleSave() {
     setAttemptedSaveName(true);
@@ -60,7 +116,9 @@ export function ProfilePage() {
       localStorage.setItem(`nickname-${account.address}`, displayName.trim());
       if (email.trim()) localStorage.setItem(`email-${account.address}`, email.trim());
       // Sync to backend so others can see the user in Friends/Communities
-      await upsertUser(account.address, displayName.trim(), selectedColor, email.trim());
+      await upsertUser(account.address, displayName.trim(), selectedColor, email.trim(), {
+        linkedZkAddress: zkAccount?.address,
+      });
       queryClient.invalidateQueries({ queryKey: ['users'] });
       setSaveMsg('saved');
       setTimeout(() => setSaveMsg('idle'), 2500);
@@ -76,6 +134,13 @@ export function ProfilePage() {
     await navigator.clipboard.writeText(account.address);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  async function copyZkAddress() {
+    if (!zkAccount?.address) return;
+    await navigator.clipboard.writeText(zkAccount.address);
+    setCopiedZk(true);
+    setTimeout(() => setCopiedZk(false), 2000);
   }
 
   // ── Not connected ────────────────────────────────────────────
@@ -180,15 +245,32 @@ export function ProfilePage() {
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
             {/* Avatar */}
             <div style={{ position: 'relative' }}>
-              <Avatar
-                name={account.address}
-                color={selectedColor}
-                size="xl"
-                style={{
-                  width: 88, height: 88, fontSize: '1.8rem',
-                  boxShadow: `0 8px 32px ${selectedColor}66`,
-                }}
-              />
+              {zkAccount?.picture ? (
+                <img
+                  src={zkAccount.picture}
+                  alt="Avatar"
+                  style={{
+                    width: 88,
+                    height: 88,
+                    borderRadius: '50%',
+                    boxShadow: `0 8px 32px ${selectedColor}66`,
+                    border: `3.5px solid ${selectedColor}`,
+                    objectFit: 'cover',
+                  }}
+                />
+              ) : (
+                <Avatar
+                  name={displayName || zkAccount?.name || suinsDomainName || account.address}
+                  color={selectedColor}
+                  size="xl"
+                  style={{
+                    width: 88,
+                    height: 88,
+                    fontSize: '1.8rem',
+                    boxShadow: `0 8px 32px ${selectedColor}66`,
+                  }}
+                />
+              )}
               <button
                 onClick={() => setEditing(true)}
                 style={{
@@ -232,7 +314,6 @@ export function ProfilePage() {
               </div>
             )}
 
-            {/* Display name */}
             {/* Display name & Email */}
             {editing ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', maxWidth: 280 }}>
@@ -284,11 +365,11 @@ export function ProfilePage() {
               </div>
             ) : (
               <div style={{ textAlign: 'center' }}>
-                <h3 style={{ marginBottom: 4 }}>{displayName || 'Anonymous'}</h3>
-                {email ? (
+                <h3 style={{ marginBottom: 4 }}>{displayName || zkAccount?.name || 'Anonymous'}</h3>
+                {(email || zkAccount?.email) ? (
                   <p className="text-xs color-text3" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                     <EmailIcon size={13} color="var(--text-3)" />
-                    {email}
+                    {email || zkAccount?.email}
                   </p>
                 ) : (
                   <p className="text-xs color-text3" style={{ marginBottom: 8, fontStyle: 'italic' }}>
@@ -316,9 +397,11 @@ export function ProfilePage() {
           <div className="divider" />
 
           {/* Wallet details */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="flex items-center justify-between">
-              <span className="text-sm color-text3">Wallet Address</span>
+              <span className="text-sm color-text3 font-medium">
+                {walletAccount ? 'Sui Wallet Address (Connected)' : 'zkLogin Address (Connected)'}
+              </span>
               <span
                 className="badge badge-green"
                 style={{ display: 'flex', alignItems: 'center', gap: 5 }}
@@ -360,7 +443,7 @@ export function ProfilePage() {
 
             {suinsDomainName && (
               <div className="flex items-center justify-between">
-                <span className="text-sm color-text3">SuiNS Domain</span>
+                <span className="text-sm color-text3 font-medium">SuiNS Domain</span>
                 <span
                   className="badge badge-purple"
                   style={{ display: 'flex', alignItems: 'center', gap: 5, fontWeight: 700 }}
@@ -370,8 +453,122 @@ export function ProfilePage() {
               </div>
             )}
 
-            <div className="flex items-center justify-between">
-              <span className="text-sm color-text3">Network</span>
+            {/* ── Linked Google zkLogin Identity Card ──────────────── */}
+            <div
+              style={{
+                marginTop: 4,
+                padding: '14px 16px',
+                borderRadius: 16,
+                background: (zkAccount?.address || linkedZkAddress) ? 'rgba(159, 157, 243, 0.08)' : 'rgba(0, 0, 0, 0.02)',
+                border: (zkAccount?.address || linkedZkAddress) ? '1.5px solid rgba(159, 157, 243, 0.25)' : '1px dashed var(--border)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <GoogleLogo size={17} />
+                  <span style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--deep)' }}>
+                    Google zkLogin Identity
+                  </span>
+                </div>
+                {(zkAccount?.address || linkedZkAddress) ? (
+                  <span
+                    className="badge badge-green"
+                    style={{ fontSize: '0.74rem', padding: '3px 8px', fontWeight: 700 }}
+                  >
+                    🔗 Linked
+                  </span>
+                ) : (
+                  <span
+                    className="badge"
+                    style={{ fontSize: '0.74rem', padding: '3px 8px', background: 'rgba(0,0,0,0.06)', color: 'var(--text-3)' }}
+                  >
+                    Not linked
+                  </span>
+                )}
+              </div>
+
+              {(zkAccount?.address || linkedZkAddress) ? (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span className="text-xs color-text3">Google Account</span>
+                    <span style={{ fontSize: '0.86rem', fontWeight: 600, color: 'var(--deep)' }}>
+                      {email || zkAccount?.email} {displayName ? `(${displayName})` : ''}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span className="text-xs color-text3">zkLogin On-Chain Address</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const targetAddr = zkAccount?.address || linkedZkAddress;
+                        if (targetAddr) {
+                          await navigator.clipboard.writeText(targetAddr);
+                          setCopiedZk(true);
+                          setTimeout(() => setCopiedZk(false), 2000);
+                        }
+                      }}
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.85)',
+                        borderRadius: 10,
+                        padding: '8px 12px',
+                        fontFamily: 'monospace',
+                        fontSize: '0.78rem',
+                        color: 'var(--deep)',
+                        wordBreak: 'break-all',
+                        cursor: 'pointer',
+                        border: '1px solid rgba(159, 157, 243, 0.2)',
+                        width: '100%',
+                        textAlign: 'left',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 6,
+                      }}
+                    >
+                      <span style={{ flex: 1 }}>{zkAccount?.address || linkedZkAddress}</span>
+                      {copiedZk
+                        ? <CheckCircleIcon size={14} color="#3a7a3c" strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
+                        : <CopyIcon size={14} color="var(--text-3)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <p className="text-xs color-text3" style={{ margin: 0, lineHeight: 1.4 }}>
+                    Link your Google account so your Gmail is tied to this wallet. Friends will be able to find and split expenses with you by email.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => loginWithGoogle()}
+                    disabled={isZkLoading}
+                    className="btn btn-sm"
+                    style={{
+                      background: 'white',
+                      border: '1.5px solid var(--border)',
+                      color: 'var(--deep)',
+                      fontWeight: 700,
+                      alignSelf: 'flex-start',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '6px 14px',
+                      borderRadius: 12,
+                      boxShadow: 'var(--shadow-sm)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <GoogleLogo size={14} />
+                    {isZkLoading ? 'Connecting Google…' : 'Link with Google'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between" style={{ marginTop: 2 }}>
+              <span className="text-sm color-text3 font-medium">Network</span>
               <span
                 className="badge badge-purple"
                 style={{ display: 'flex', alignItems: 'center', gap: 5 }}
@@ -382,7 +579,7 @@ export function ProfilePage() {
             </div>
 
             <div className="flex items-center justify-between">
-              <span className="text-sm color-text3">Security</span>
+              <span className="text-sm color-text3 font-medium">Security</span>
               <span
                 className="badge badge-green"
                 style={{ display: 'flex', alignItems: 'center', gap: 5 }}

@@ -16,11 +16,17 @@ export async function fetchUser(address: string): Promise<any | null> {
   return res.json();
 }
 
-export async function upsertUser(address: string, nickname: string, avatarColor: string, email?: string): Promise<void> {
+export async function upsertUser(
+  address: string,
+  nickname: string,
+  avatarColor: string,
+  email?: string,
+  extra?: { linkedZkAddress?: string; linkedWalletAddress?: string }
+): Promise<void> {
   const res = await fetch(`${BASE_URL}/users`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address, nickname, avatarColor, email }),
+    body: JSON.stringify({ address, nickname, avatarColor, email, ...extra }),
   });
   if (!res.ok) throw new Error('Failed to save user');
 }
@@ -64,7 +70,7 @@ export async function fetchFriends(ownerAddress: string, search = ''): Promise<a
 
 export async function addFriend(
   ownerAddress: string,
-  friend: { address: string; nickname: string; avatarColor: string; email?: string },
+  friend: { address: string; nickname: string; avatarColor: string; email?: string; suins?: string },
 ): Promise<void> {
   const res = await fetch(
     `${BASE_URL}/users/${encodeURIComponent(ownerAddress.toLowerCase())}/friends`,
@@ -116,3 +122,54 @@ export async function updatePaymentRequest(id: string, update: { status: 'paid' 
   });
   if (!res.ok) throw new Error('Failed to update payment request');
 }
+
+// ── Friend Requests API ───────────────────────────────────────────────────────
+export async function sendFriendRequest(request: {
+  senderAddress: string;
+  senderName: string;
+  senderAvatarColor: string;
+  senderEmail?: string;
+  senderSuins?: string;
+  recipientAddress?: string;
+  recipientEmail?: string;
+  recipientName: string;
+  recipientSuins?: string;
+}): Promise<any> {
+  const res = await fetch(`${BASE_URL}/friend-requests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) throw new Error('Failed to send friend request');
+  return res.json();
+}
+
+export async function fetchFriendRequests(address: string, email?: string): Promise<{ incoming: any[]; outgoing: any[] }> {
+  const params = new URLSearchParams();
+  if (address) params.append('address', address);
+  if (email) params.append('email', email);
+  const res = await fetch(`${BASE_URL}/friend-requests?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to fetch friend requests');
+  return res.json();
+}
+
+export async function updateFriendRequest(
+  id: string,
+  status: 'accepted' | 'rejected' | 'canceled',
+  recipientInfo?: { address: string; name: string; avatarColor: string; email?: string }
+): Promise<any> {
+  const res = await fetch(`${BASE_URL}/friend-requests/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status,
+      recipientAddress: recipientInfo?.address,
+      recipientName: recipientInfo?.name,
+      recipientAvatarColor: recipientInfo?.avatarColor,
+      recipientEmail: recipientInfo?.email,
+    }),
+  });
+  if (!res.ok) throw new Error('Failed to update friend request');
+  return res.json();
+}
+

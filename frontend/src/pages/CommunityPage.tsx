@@ -10,7 +10,7 @@ import {
   CommunityIcon, SplitIcon, PlusIcon, BackIcon,
   ChevronRightIcon, CheckIcon, GroupIcon, EmptyBoxIcon,
 } from '../components/Icons';
-import { fetchCommunities, createCommunity, fetchUsers } from '../api';
+import { fetchCommunities, createCommunity, fetchFriends } from '../api';
 import { useZkLogin } from '../hooks/useZkLogin';
 import { apiUserToMember, apiCommunityToFrontend } from '../types';
 import type { Community, Member } from '../types';
@@ -89,11 +89,12 @@ function CommunityPageInner() {
     staleTime: 30_000,
   });
 
-  // ── Fetch all users for the member-picker ────────────────────
-  const { data: allUsers = [] } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => fetchUsers(),
-    staleTime: 60_000,
+  // ── Fetch user's friends for the member-picker ───────────────
+  const { data: userFriends = [] } = useQuery({
+    queryKey: ['friends', ownerAddress],
+    queryFn: () => fetchFriends(ownerAddress),
+    enabled: !!ownerAddress,
+    staleTime: 10_000,
   });
 
   // ── Create community mutation ────────────────────────────────
@@ -332,42 +333,56 @@ function CommunityPageInner() {
                 />
               </div>
 
-              <p className="section-title" style={{ marginBottom: 10 }}>ADD MEMBERS (from registered users)</p>
+              <p className="section-title" style={{ marginBottom: 10 }}>ADD MEMBERS (from your friends)</p>
               {attemptedCreate && selectedAddresses.length === 0 && (
                 <p className="text-xs" style={{ color: '#c0392b', marginBottom: 10, fontWeight: 500 }}>
-                  * Please select at least 1 member for this community
+                  * Please select at least 1 friend for this community
                 </p>
               )}
               <div style={{ marginBottom: 20, maxHeight: 260, overflowY: 'auto' }}>
-                {allUsers.length === 0 && (
-                  <p className="text-sm color-text3" style={{ textAlign: 'center', padding: '20px 0' }}>
-                    No registered users yet. Members can register by saving their profile.
-                  </p>
+                {userFriends.length === 0 && (
+                  <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                    <p className="text-sm color-text3" style={{ marginBottom: 10 }}>
+                      No friends added yet. Add friends first to invite them to your community.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => {
+                        setShowCreateModal(false);
+                        navigate('/friends');
+                      }}
+                      style={{ color: 'var(--deep)', fontWeight: 600 }}
+                    >
+                      + Add Friends
+                    </button>
+                  </div>
                 )}
-                {allUsers.map((u: any) => {
-                  const sel = selectedAddresses.includes(u.address);
+                {userFriends.map((f: any) => {
+                  const friendAddr = (f.address || f.walletAddress || '').toLowerCase();
+                  const sel = selectedAddresses.includes(friendAddr);
                   return (
                     <div
-                      key={u.address}
+                      key={friendAddr || f.email}
                       className="list-row"
-                      onClick={() => toggleAddress(u.address)}
+                      onClick={() => friendAddr && toggleAddress(friendAddr)}
                       style={{
                         background: sel ? 'rgba(159,157,243,0.12)' : undefined,
                         borderColor: sel ? 'var(--purple)' : undefined,
-                        cursor: 'pointer',
+                        cursor: friendAddr ? 'pointer' : 'default',
                         display: 'flex',
                         alignItems: 'center',
                         gap: 14,
                         padding: '12px 14px',
                       }}
                     >
-                      <Avatar member={apiUserToMember(u)} size="sm" style={{ flexShrink: 0 }} />
+                      <Avatar member={apiUserToMember(f)} size="sm" style={{ flexShrink: 0 }} />
                       <div className="list-row-content" style={{ flex: 1, minWidth: 0 }}>
                         <div className="list-row-title" style={{ fontSize: '0.9rem' }}>
-                          {u.nickname || 'Anonymous'}
+                          {f.nickname || f.name || 'Friend'}
                         </div>
                         <div className="list-row-sub" style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                          {u.address.slice(0, 20)}…
+                          {friendAddr ? `${friendAddr.slice(0, 18)}…` : f.email || ''}
                         </div>
                       </div>
                       <div style={{

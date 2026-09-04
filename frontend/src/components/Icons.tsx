@@ -293,9 +293,9 @@ export function LinkIcon(p: IconProps) {
 export function HistoryIcon(p: IconProps) {
   return svg(p,
     <>
-      <path d="M3 12a9 9 0 109-9H3" />
-      <path d="M3 5v7h7" />
-      <path d="M12 7v5l3 3" />
+      <path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M12 7v5l4 2" />
     </>,
   );
 }

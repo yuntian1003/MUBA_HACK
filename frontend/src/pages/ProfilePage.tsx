@@ -8,33 +8,23 @@ import { Avatar } from '../components/Avatar';
 import {
   WalletIcon, ShieldIcon, GlobeIcon, CheckCircleIcon,
   CopyIcon, EditIcon, HistoryIcon,
-  LinkIcon, EmptyBoxIcon, LockIcon, EmailIcon,
+  LinkIcon, EmptyBoxIcon, EmailIcon,
 } from '../components/Icons';
 import { AVATAR_COLORS } from '../constants';
 import { upsertUser, fetchUser } from '../api';
 import { useSuiNSName } from '../hooks/useSuiNS';
-
-
-// Inline 2-D illustration for the connect screen
-function ConnectIllustration() {
-  return (
-    <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Wallet body */}
-      <rect x="8" y="20" width="56" height="36" rx="10" fill="white" fillOpacity="0.3" stroke="white" strokeWidth="2.5" />
-      {/* Card slot */}
-      <rect x="8" y="28" width="56" height="2.5" fill="white" fillOpacity="0.6" />
-      {/* Coin circle */}
-      <circle cx="52" cy="40" r="8" fill="white" fillOpacity="0.4" stroke="white" strokeWidth="2" />
-      <circle cx="52" cy="40" r="4" fill="white" fillOpacity="0.7" />
-      {/* Lock icon on left */}
-      <rect x="20" y="36" width="12" height="9" rx="2.5" fill="white" fillOpacity="0.6" />
-      <path d="M22.5 36v-3a3.5 3.5 0 017 0v3" stroke="white" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
-}
+import { useZkLogin } from '../hooks/useZkLogin';
 
 export function ProfilePage() {
-  const account = useCurrentAccount();
+  const walletAccount = useCurrentAccount();
+  const { zkAccount, loginWithGoogle, isLoading: isZkLoading } = useZkLogin();
+
+  const account = walletAccount
+    ? { address: walletAccount.address, label: walletAccount.label, isZk: false }
+    : zkAccount
+    ? { address: zkAccount.address, label: zkAccount.name, isZk: true }
+    : null;
+
   const queryClient = useQueryClient();
   const { data: suinsDomainName } = useSuiNSName(account?.address);
   const [displayName, setDisplayName] = useState('');
@@ -91,34 +81,77 @@ export function ProfilePage() {
   // ── Not connected ────────────────────────────────────────────
   if (!account) {
     return (
-      <main className="page">
-        <div className="connect-hero">
-          <div className="connect-blob">
-            <ConnectIllustration />
+      <main className="page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '70vh' }}>
+        <div
+          style={{
+            textAlign: 'center',
+            maxWidth: 380,
+            width: '100%',
+            padding: '2.5rem 2rem',
+            background: 'var(--surface)',
+            borderRadius: 24,
+            border: '1px solid var(--border)',
+            boxShadow: '0 8px 40px rgba(0,0,0,0.12)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '1.5rem',
+          }}
+        >
+          <div
+            style={{
+              width: 64, height: 64, borderRadius: '50%',
+              background: 'linear-gradient(135deg, var(--lavender) 0%, var(--mint) 100%)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <WalletIcon size={28} color="var(--deep)" strokeWidth={1.9} />
           </div>
-          <div style={{ textAlign: 'center' }}>
-            <h2 style={{ marginBottom: 6 }}>Connect Your Sui Wallet</h2>
+
+          <div>
+            <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: 8 }}>
+              Connect Your Account
+            </h2>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-2)', lineHeight: 1.5 }}>
+              Sign in with Google zkLogin or connect your Sui wallet (Slush / Sui Wallet) to view your profile.
+            </p>
           </div>
-          <ConnectButton />
-          <div className="clay-card flat" style={{ padding: '10px 20px', width: 'fit-content', alignSelf: 'center' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {[
-                { Icon: LockIcon, color: '#9F9DF3', text: 'Non-custodial' },
-                { Icon: WalletIcon, color: '#FF9BB3', text: 'Sign transactions directly' },
-                { Icon: GlobeIcon, color: '#C9EBCA', text: 'Works with Sui Wallet' },
-              ].map(({ Icon, color, text }) => (
-                <div key={text} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0' }}>
-                  <div style={{
-                    width: 30, height: 30, borderRadius: 9,
-                    background: `${color}22`, border: `1.5px solid ${color}44`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0,
-                  }}>
-                    <Icon size={15} color={color} strokeWidth={1.9} />
-                  </div>
-                  <span className="text-sm color-text2" style={{ whiteSpace: 'nowrap' }}>{text}</span>
-                </div>
-              ))}
+
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <button
+              className="btn btn-primary"
+              onClick={loginWithGoogle}
+              disabled={isZkLoading}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                background: '#fff',
+                color: '#3c4043',
+                border: '1px solid #dadce0',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                fontWeight: 600,
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+              </svg>
+              {isZkLoading ? 'Connecting…' : 'Sign in with Google'}
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0' }}>
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', textTransform: 'uppercase' }}>or</span>
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <ConnectButton />
             </div>
           </div>
         </div>

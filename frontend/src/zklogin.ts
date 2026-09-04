@@ -64,18 +64,16 @@ export function getOrCreateEphemeralKeypair(): Ed25519Keypair {
     localStorage.getItem(STORAGE_KEYS.EPHEMERAL_KEY);
   if (existingSecret) {
     try {
-      const secretBytes = new Uint8Array(JSON.parse(existingSecret));
-      return Ed25519Keypair.fromSecretKey(secretBytes);
-    } catch {
-      // Fall through to generate new keypair if parse fails
+      return Ed25519Keypair.fromSecretKey(existingSecret);
+    } catch (err) {
+      console.error('Failed to parse existing ephemeral key:', err);
     }
   }
 
   const keypair = new Ed25519Keypair();
-  const secretKeyBytes = Array.from(keypair.getSecretKey());
-  const serialized = JSON.stringify(secretKeyBytes);
-  sessionStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, serialized);
-  localStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, serialized);
+  const secretKey = keypair.getSecretKey();
+  sessionStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, secretKey);
+  localStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, secretKey);
   return keypair;
 }
 
@@ -115,9 +113,14 @@ export function prepareGoogleLoginUrl(maxEpoch: number = 2000): string {
   if (!GOOGLE_CLIENT_ID) {
     throw new Error('VITE_GOOGLE_CLIENT_ID is not configured.');
   }
-  const keypair = getOrCreateEphemeralKeypair();
+
+  // Always generate a fresh ephemeral keypair and randomness for each login attempt
+  const keypair = new Ed25519Keypair();
+  const secretKey = keypair.getSecretKey();
   const randomness = generateRandomness();
 
+  sessionStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, secretKey);
+  localStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, secretKey);
   sessionStorage.setItem(STORAGE_KEYS.RANDOMNESS, randomness);
   localStorage.setItem(STORAGE_KEYS.RANDOMNESS, randomness);
   sessionStorage.setItem(STORAGE_KEYS.MAX_EPOCH, maxEpoch.toString());

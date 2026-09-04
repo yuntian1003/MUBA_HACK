@@ -5,12 +5,11 @@
     "dev": "concurrently -n \"backend,frontend\" -c \"cyan,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:frontend": "npm --prefix frontend run dev",
     "dev:backend": "npm --prefix backend run dev",
+    "start": "npm --prefix backend run start",
+    "start:backend": "npm --prefix backend run start",
     "build": "npm --prefix frontend run build",
     "test:move": "cd smartsplit && sui move test",
     "build:move": "cd smartsplit && sui move build"
-  },
-  "devDependencies": {
-    "concurrently": "^9.1.2"
   },
   "dependencies": {
     "@mysten/dapp-kit": "^1.1.17",

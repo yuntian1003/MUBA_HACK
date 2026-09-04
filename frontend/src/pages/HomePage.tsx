@@ -131,9 +131,15 @@ export function HomePage() {
   const { pay, isPaying, payError, successDigest } = usePayRequest();
   const [activeReqId, setActiveReqId] = useState<string | null>(null);
 
+  const effectiveEmail = (
+    zkAccount?.email ||
+    (account?.address ? localStorage.getItem(`email-${account.address}`) : '') ||
+    ''
+  ).toLowerCase().trim();
+
   const { data: payRequests = { incoming: [], outgoing: [] } } = useQuery({
-    queryKey: ['payment-requests', account?.address],
-    queryFn: () => fetchPaymentRequests(account?.address || ''),
+    queryKey: ['payment-requests', account?.address, effectiveEmail],
+    queryFn: () => fetchPaymentRequests(account?.address || '', effectiveEmail),
     enabled: !!account?.address,
     refetchInterval: 8000,
   });

@@ -118,9 +118,12 @@ export function ProfilePage() {
       if (email.trim()) localStorage.setItem(`email-${account.address}`, email.trim());
       // Sync to backend so others can see the user in Friends/Communities
       await upsertUser(account.address, displayName.trim(), selectedColor, email.trim(), {
-        linkedZkAddress: zkAccount?.address,
+        linkedZkAddress: account.isZk ? undefined : (zkAccount?.address || linkedZkAddress),
+        linkedWalletAddress: account.isZk ? (walletAccount?.address || undefined) : undefined,
       });
       queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['friends'] });
+      queryClient.invalidateQueries({ queryKey: ['my-profile'] });
       setSaveMsg('saved');
       setTimeout(() => setSaveMsg('idle'), 2500);
     } catch {

@@ -37,10 +37,16 @@ export function HistoryPage() {
 
   const { execute } = useSplitTransaction();
 
+  const effectiveEmail = (
+    zkAccount?.email ||
+    (ownerAddress ? localStorage.getItem(`email-${ownerAddress}`) : '') ||
+    ''
+  ).toLowerCase().trim();
+
   // ── Fetch Payment Requests ──────────────────────────────────
   const { data, isLoading } = useQuery({
-    queryKey: ['payment-requests-history', ownerAddress],
-    queryFn: () => fetchPaymentRequests(ownerAddress),
+    queryKey: ['payment-requests-history', ownerAddress, effectiveEmail],
+    queryFn: () => fetchPaymentRequests(ownerAddress, effectiveEmail),
     enabled: !!ownerAddress,
     refetchInterval: 3000,
   });

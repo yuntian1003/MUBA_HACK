@@ -73,23 +73,120 @@ app.get('/api/ping', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now(), firebase: hasFirebaseCredentials });
 });
 
+// ------------------- Central Identity Aggregator -------------------
+// Discovers all linked addresses (zkLogin + wallet) and emails for a user
+async function getAllLinkedIdentities(query: { address?: string; email?: string }): Promise<{ addresses: Set<string>; emails: Set<string> }> {
+  const addresses = new Set<string>();
+  const emails = new Set<string>();
+
+  if (query.address) {
+    const a = query.address.toLowerCase().trim();
+    if (a) addresses.add(a);
+  }
+  if (query.email) {
+    const e = query.email.toLowerCase().trim();
+    if (e) emails.add(e);
+  }
+
+  if (addresses.size === 0 && emails.size === 0) {
+    return { addresses, emails };
+  }
+
+  // Iteratively discover connected identities (up to 3 passes)
+  for (let pass = 0; pass < 3; pass++) {
+    const prevAddrCount = addresses.size;
+    const prevEmailCount = emails.size;
+
+    if (hasFirebaseCredentials) {
+      try {
+        const foundDocs: any[] = [];
+
+        for (const addr of Array.from(addresses)) {
+          const doc = await db.collection('users').doc(addr).get();
+          if (doc.exists) foundDocs.push(doc.data());
+
+          const snapZk = await db.collection('users').where('linkedZkAddress', '==', addr).get();
+          snapZk.docs.forEach((d: any) => foundDocs.push(d.data()));
+
+          const snapWallet = await db.collection('users').where('linkedWalletAddress', '==', addr).get();
+          snapWallet.docs.forEach((d: any) => foundDocs.push(d.data()));
+        }
+
+        for (const em of Array.from(emails)) {
+          const snapEmail = await db.collection('users').where('email', '==', em).get();
+          snapEmail.docs.forEach((d: any) => foundDocs.push(d.data()));
+        }
+
+        for (const doc of foundDocs) {
+          if (doc.address) addresses.add(doc.address.toLowerCase().trim());
+          if (doc.linkedZkAddress) addresses.add(doc.linkedZkAddress.toLowerCase().trim());
+          if (doc.linkedWalletAddress) addresses.add(doc.linkedWalletAddress.toLowerCase().trim());
+          if (doc.email) emails.add(doc.email.toLowerCase().trim());
+        }
+      } catch (err) {
+        console.warn('Error in getAllLinkedIdentities Firebase lookup:', err);
+      }
+    } else {
+      for (const u of memoryUsers.values()) {
+        const uAddr = (u.address || '').toLowerCase().trim();
+        const uZk = (u.linkedZkAddress || '').toLowerCase().trim();
+        const uWallet = (u.linkedWalletAddress || '').toLowerCase().trim();
+        const uEmail = (u.email || '').toLowerCase().trim();
+
+        const matches =
+          (uAddr && addresses.has(uAddr)) ||
+          (uZk && addresses.has(uZk)) ||
+          (uWallet && addresses.has(uWallet)) ||
+          (uEmail && emails.has(uEmail));
+
+        if (matches) {
+          if (uAddr) addresses.add(uAddr);
+          if (uZk) addresses.add(uZk);
+          if (uWallet) addresses.add(uWallet);
+          if (uEmail) emails.add(uEmail);
+        }
+      }
+    }
+
+    if (addresses.size === prevAddrCount && emails.size === prevEmailCount) {
+      break;
+    }
+  }
+
+  return { addresses, emails };
+}
+
 // ------------------- Users API -------------------
-// Get a single user profile
+// Get a single user profile (with linked address fallback lookup)
 app.get('/api/users/:address', async (req, res) => {
   try {
     const addressKey = req.params.address.toLowerCase().trim();
     if (hasFirebaseCredentials) {
-      const doc = await db.collection('users').doc(addressKey).get();
-      if (!doc.exists) {
-        return res.status(404).json({ error: 'User not found' });
+      let doc = await db.collection('users').doc(addressKey).get();
+      if (doc.exists) {
+        return res.json(doc.data());
       }
-      return res.json(doc.data());
+      // Check if any user doc has linkedZkAddress or linkedWalletAddress
+      const snapZk = await db.collection('users').where('linkedZkAddress', '==', addressKey).limit(1).get();
+      if (!snapZk.empty) return res.json(snapZk.docs[0].data());
+
+      const snapWallet = await db.collection('users').where('linkedWalletAddress', '==', addressKey).limit(1).get();
+      if (!snapWallet.empty) return res.json(snapWallet.docs[0].data());
+
+      return res.status(404).json({ error: 'User not found' });
     } else {
-      const user = memoryUsers.get(addressKey);
-      if (!user) {
-        return res.status(404).json({ error: 'User not found' });
+      let user = memoryUsers.get(addressKey);
+      if (user) return res.json(user);
+
+      for (const u of memoryUsers.values()) {
+        if (
+          (u.linkedZkAddress && u.linkedZkAddress.toLowerCase() === addressKey) ||
+          (u.linkedWalletAddress && u.linkedWalletAddress.toLowerCase() === addressKey)
+        ) {
+          return res.json(u);
+        }
       }
-      return res.json(user);
+      return res.status(404).json({ error: 'User not found' });
     }
   } catch (e) {
     console.error(e);
@@ -97,7 +194,7 @@ app.get('/api/users/:address', async (req, res) => {
   }
 });
 
-// Create or update a user profile (merge = true)
+// Create or update a user profile (symmetrical linking & auto-discovery by email)
 app.post('/api/users', async (req, res) => {
   try {
     let { address, nickname, avatarColor, email, linkedZkAddress, linkedWalletAddress } = req.body;
@@ -125,10 +222,40 @@ app.post('/api/users', async (req, res) => {
       userData.linkedWalletAddress = linkedWalletAddress.toLowerCase().trim();
     }
 
+    // Auto-discover existing account with the same email if one link is missing
+    if (finalEmail && (!userData.linkedZkAddress || !userData.linkedWalletAddress)) {
+      if (hasFirebaseCredentials) {
+        try {
+          const sameEmailSnap = await db.collection('users').where('email', '==', finalEmail).get();
+          for (const d of sameEmailSnap.docs) {
+            const data = d.data();
+            const dAddr = (d.id || data.address || '').toLowerCase().trim();
+            if (dAddr && dAddr !== normAddress) {
+              if (!userData.linkedZkAddress) {
+                userData.linkedZkAddress = dAddr;
+              }
+            }
+          }
+        } catch (e) {}
+      } else {
+        for (const u of memoryUsers.values()) {
+          const uAddr = (u.address || '').toLowerCase().trim();
+          const uEmail = (u.email || '').toLowerCase().trim();
+          if (uEmail === finalEmail && uAddr && uAddr !== normAddress) {
+            if (!userData.linkedZkAddress) {
+              userData.linkedZkAddress = uAddr;
+            }
+          }
+        }
+      }
+    }
+
     if (hasFirebaseCredentials) {
       await db.collection('users').doc(normAddress).set(userData, { merge: true });
-      if (linkedZkAddress && linkedZkAddress.toLowerCase().trim() !== normAddress) {
-        const zkNorm = linkedZkAddress.toLowerCase().trim();
+
+      // Symmetrical link for linkedZkAddress
+      if (userData.linkedZkAddress && userData.linkedZkAddress !== normAddress) {
+        const zkNorm = userData.linkedZkAddress;
         await db.collection('users').doc(zkNorm).set({
           address: zkNorm,
           linkedWalletAddress: normAddress,
@@ -137,16 +264,42 @@ app.post('/api/users', async (req, res) => {
           email: finalEmail,
         }, { merge: true });
       }
+
+      // Symmetrical link for linkedWalletAddress
+      if (userData.linkedWalletAddress && userData.linkedWalletAddress !== normAddress) {
+        const walletNorm = userData.linkedWalletAddress;
+        await db.collection('users').doc(walletNorm).set({
+          address: walletNorm,
+          linkedZkAddress: normAddress,
+          nickname: userData.nickname,
+          avatarColor: userData.avatarColor,
+          email: finalEmail,
+        }, { merge: true });
+      }
     } else {
       const existing = memoryUsers.get(normAddress) || {};
       memoryUsers.set(normAddress, { ...existing, ...userData });
-      if (linkedZkAddress && linkedZkAddress.toLowerCase().trim() !== normAddress) {
-        const zkNorm = linkedZkAddress.toLowerCase().trim();
+
+      if (userData.linkedZkAddress && userData.linkedZkAddress !== normAddress) {
+        const zkNorm = userData.linkedZkAddress;
         const existingZk = memoryUsers.get(zkNorm) || {};
         memoryUsers.set(zkNorm, {
           ...existingZk,
           address: zkNorm,
           linkedWalletAddress: normAddress,
+          nickname: userData.nickname,
+          avatarColor: userData.avatarColor,
+          email: finalEmail,
+        });
+      }
+
+      if (userData.linkedWalletAddress && userData.linkedWalletAddress !== normAddress) {
+        const walletNorm = userData.linkedWalletAddress;
+        const existingWallet = memoryUsers.get(walletNorm) || {};
+        memoryUsers.set(walletNorm, {
+          ...existingWallet,
+          address: walletNorm,
+          linkedZkAddress: normAddress,
           nickname: userData.nickname,
           avatarColor: userData.avatarColor,
           email: finalEmail,
@@ -209,6 +362,9 @@ app.get('/api/communities', async (req, res) => {
     const owner = (req.query.owner as string || '').toLowerCase().trim();
     let communities: any[] = [];
 
+    const { addresses: myAddresses } = owner ? await getAllLinkedIdentities({ address: owner }) : { addresses: new Set<string>() };
+    if (owner) myAddresses.add(owner);
+
     if (hasFirebaseCredentials) {
       try {
         const commSnap = await db.collection('communities').get();
@@ -226,11 +382,13 @@ app.get('/api/communities', async (req, res) => {
         );
 
         if (owner) {
-          communities = allComms.filter((c: any) =>
-            (c.ownerAddress || '').toLowerCase() === owner ||
-            (Array.isArray(c.memberAddresses) && c.memberAddresses.includes(owner)) ||
-            (Array.isArray(c.members) && c.members.some((m: any) => (m.walletAddress || m.address || '').toLowerCase() === owner))
-          );
+          communities = allComms.filter((c: any) => {
+            const cOwner = (c.ownerAddress || '').toLowerCase().trim();
+            if (cOwner && myAddresses.has(cOwner)) return true;
+            if (Array.isArray(c.memberAddresses) && c.memberAddresses.some((a: string) => myAddresses.has((a || '').toLowerCase().trim()))) return true;
+            if (Array.isArray(c.members) && c.members.some((m: any) => myAddresses.has((m.walletAddress || m.address || '').toLowerCase().trim()))) return true;
+            return false;
+          });
         } else {
           communities = allComms;
         }
@@ -238,21 +396,25 @@ app.get('/api/communities', async (req, res) => {
         console.warn('Firebase error fetching communities, falling back to memory:', fbErr);
         communities = Array.from(memoryCommunities.values());
         if (owner) {
-          communities = communities.filter((c: any) =>
-            (c.ownerAddress || '').toLowerCase() === owner ||
-            (Array.isArray(c.memberAddresses) && c.memberAddresses.includes(owner)) ||
-            (Array.isArray(c.members) && c.members.some((m: any) => (m.walletAddress || m.address || '').toLowerCase() === owner))
-          );
+          communities = communities.filter((c: any) => {
+            const cOwner = (c.ownerAddress || '').toLowerCase().trim();
+            if (cOwner && myAddresses.has(cOwner)) return true;
+            if (Array.isArray(c.memberAddresses) && c.memberAddresses.some((a: string) => myAddresses.has((a || '').toLowerCase().trim()))) return true;
+            if (Array.isArray(c.members) && c.members.some((m: any) => myAddresses.has((m.walletAddress || m.address || '').toLowerCase().trim()))) return true;
+            return false;
+          });
         }
       }
     } else {
       communities = Array.from(memoryCommunities.values());
       if (owner) {
-        communities = communities.filter((c: any) =>
-          (c.ownerAddress || '').toLowerCase() === owner ||
-          (Array.isArray(c.memberAddresses) && c.memberAddresses.includes(owner)) ||
-          (Array.isArray(c.members) && c.members.some((m: any) => (m.walletAddress || m.address || '').toLowerCase() === owner))
-        );
+        communities = communities.filter((c: any) => {
+          const cOwner = (c.ownerAddress || '').toLowerCase().trim();
+          if (cOwner && myAddresses.has(cOwner)) return true;
+          if (Array.isArray(c.memberAddresses) && c.memberAddresses.some((a: string) => myAddresses.has((a || '').toLowerCase().trim()))) return true;
+          if (Array.isArray(c.members) && c.members.some((m: any) => myAddresses.has((m.walletAddress || m.address || '').toLowerCase().trim()))) return true;
+          return false;
+        });
       }
     }
 
@@ -325,21 +487,51 @@ app.post('/api/communities', async (req, res) => {
   }
 });
 
-// ------------------- Friends API -------------------
+// ------------------- Friends API (Unified across linked identities) -------------------
 app.get('/api/users/:owner/friends', async (req, res) => {
   try {
     const owner = req.params.owner.toLowerCase().trim();
     const q = (req.query.q as string || '').toLowerCase();
-    let friends: any[] = [];
+
+    // Resolve all linked addresses for owner
+    const { addresses } = await getAllLinkedIdentities({ address: owner });
+    addresses.add(owner);
+
+    const friendsMap = new Map<string, any>();
 
     if (hasFirebaseCredentials) {
-      const snap = await db.collection('users').doc(owner).collection('friends').get();
-      friends = snap.docs.map((d: any) => ({ ...d.data(), address: d.id }));
+      for (const addr of addresses) {
+        try {
+          const snap = await db.collection('users').doc(addr).collection('friends').get();
+          for (const d of snap.docs) {
+            const data = d.data();
+            const friendAddr = (d.id || data.address || '').toLowerCase().trim();
+            // Don't include self if self was somehow added
+            if (friendAddr && !addresses.has(friendAddr)) {
+              if (!friendsMap.has(friendAddr)) {
+                friendsMap.set(friendAddr, { ...data, address: friendAddr });
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(`Error fetching friends for ${addr}:`, err);
+        }
+      }
     } else {
-      const userFriendsMap = memoryFriends.get(owner);
-      friends = userFriendsMap ? Array.from(userFriendsMap.values()) : [];
+      for (const addr of addresses) {
+        const userFriendsMap = memoryFriends.get(addr);
+        if (userFriendsMap) {
+          for (const [fAddr, fData] of userFriendsMap.entries()) {
+            const friendAddr = fAddr.toLowerCase().trim();
+            if (!addresses.has(friendAddr) && !friendsMap.has(friendAddr)) {
+              friendsMap.set(friendAddr, fData);
+            }
+          }
+        }
+      }
     }
 
+    let friends = Array.from(friendsMap.values());
     if (q) {
       friends = friends.filter((f: any) =>
         (f.nickname && f.nickname.toLowerCase().includes(q)) ||
@@ -373,15 +565,24 @@ app.post('/api/users/:owner/friends', async (req, res) => {
       suins: suins || '',
     };
 
+    const { addresses } = await getAllLinkedIdentities({ address: owner });
+    addresses.add(owner);
+
     if (hasFirebaseCredentials) {
-      await db.collection('users').doc(owner).collection('friends').doc(address).set(friendData, { merge: true });
+      await Promise.all(
+        Array.from(addresses).map((addr) =>
+          db.collection('users').doc(addr).collection('friends').doc(address).set(friendData, { merge: true })
+        )
+      );
     } else {
-      let userFriendsMap = memoryFriends.get(owner);
-      if (!userFriendsMap) {
-        userFriendsMap = new Map();
-        memoryFriends.set(owner, userFriendsMap);
+      for (const addr of addresses) {
+        let userFriendsMap = memoryFriends.get(addr);
+        if (!userFriendsMap) {
+          userFriendsMap = new Map();
+          memoryFriends.set(addr, userFriendsMap);
+        }
+        userFriendsMap.set(address, friendData);
       }
-      userFriendsMap.set(address, friendData);
     }
 
     res.json({ success: true, ...friendData });
@@ -396,10 +597,19 @@ app.delete('/api/users/:owner/friends/:friendAddress', async (req, res) => {
     const owner = req.params.owner.toLowerCase().trim();
     const friendAddress = req.params.friendAddress.toLowerCase().trim();
 
+    const { addresses } = await getAllLinkedIdentities({ address: owner });
+    addresses.add(owner);
+
     if (hasFirebaseCredentials) {
-      await db.collection('users').doc(owner).collection('friends').doc(friendAddress).delete();
+      await Promise.all(
+        Array.from(addresses).map((addr) =>
+          db.collection('users').doc(addr).collection('friends').doc(friendAddress).delete()
+        )
+      );
     } else {
-      memoryFriends.get(owner)?.delete(friendAddress);
+      for (const addr of addresses) {
+        memoryFriends.get(addr)?.delete(friendAddress);
+      }
     }
 
     res.json({ success: true, friendAddress });
@@ -424,8 +634,10 @@ app.post('/api/payment-requests', async (req, res) => {
         id,
         requesterAddress: r.requesterAddress.trim(),
         requesterName: r.requesterName || 'Requester',
+        requesterEmail: (r.requesterEmail || '').trim().toLowerCase(),
         payerAddress: r.payerAddress.trim(),
         payerName: r.payerName || 'Friend',
+        payerEmail: (r.payerEmail || '').trim().toLowerCase(),
         amountSui: Number(r.amountSui),
         purpose: r.purpose || 'Payment Request',
         status: 'pending',
@@ -449,45 +661,41 @@ app.post('/api/payment-requests', async (req, res) => {
 app.get('/api/payment-requests', async (req, res) => {
   try {
     const queryAddr = (req.query.address as string || '').toLowerCase().trim();
+    const queryEmail = (req.query.email as string || '').toLowerCase().trim();
     const all = hasFirebaseCredentials
       ? (await db.collection('payment_requests').get()).docs.map((d: any) => d.data())
       : Array.from(memoryPaymentRequests.values());
 
-    if (!queryAddr) {
+    if (!queryAddr && !queryEmail) {
       return res.json({ incoming: all, outgoing: [] });
     }
 
-    // Collect all equivalent addresses/identities for this user
-    const validAddresses = new Set<string>([queryAddr]);
-
-    let userDoc: any = null;
-    if (hasFirebaseCredentials) {
-      try {
-        const doc = await db.collection('users').doc(queryAddr).get();
-        if (doc.exists) userDoc = doc.data();
-      } catch (e) {}
-    } else {
-      userDoc = memoryUsers.get(queryAddr);
-    }
-
-    if (userDoc) {
-      if (userDoc.address) validAddresses.add(userDoc.address.toLowerCase().trim());
-      if (userDoc.linkedZkAddress) validAddresses.add(userDoc.linkedZkAddress.toLowerCase().trim());
-      if (userDoc.linkedWalletAddress) validAddresses.add(userDoc.linkedWalletAddress.toLowerCase().trim());
-      if (userDoc.email) validAddresses.add(userDoc.email.toLowerCase().trim());
-    }
+    const { addresses: validAddresses, emails: validEmails } = await getAllLinkedIdentities({
+      address: queryAddr,
+      email: queryEmail,
+    });
+    if (queryAddr) validAddresses.add(queryAddr);
+    if (queryEmail) validEmails.add(queryEmail);
 
     const incoming = all
       .filter((r: any) => {
-        const payer = (r.payerAddress || '').toLowerCase().trim();
-        return validAddresses.has(payer) && r.status === 'pending';
+        const payerAddr = (r.payerAddress || '').toLowerCase().trim();
+        const payerEmail = (r.payerEmail || '').toLowerCase().trim();
+        const matchesPayer =
+          (payerAddr && validAddresses.has(payerAddr)) ||
+          (payerEmail && validEmails.has(payerEmail));
+        return matchesPayer && r.status === 'pending';
       })
       .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
 
     const outgoing = all
       .filter((r: any) => {
-        const requester = (r.requesterAddress || '').toLowerCase().trim();
-        return validAddresses.has(requester);
+        const requesterAddr = (r.requesterAddress || '').toLowerCase().trim();
+        const requesterEmail = (r.requesterEmail || '').toLowerCase().trim();
+        const matchesRequester =
+          (requesterAddr && validAddresses.has(requesterAddr)) ||
+          (requesterEmail && validEmails.has(requesterEmail));
+        return matchesRequester;
       })
       .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
 
@@ -552,46 +760,24 @@ app.post('/api/friend-requests', async (req, res) => {
     const finalSenderAddress = senderAddress.toLowerCase().trim();
     const finalSenderEmail = (senderEmail || '').toLowerCase().trim();
 
-    if (!finalRecipientAddress && finalRecipientEmail) {
-      try {
-        if (hasFirebaseCredentials) {
-          const usersSnap = await db.collection('users').where('email', '==', finalRecipientEmail).get();
-          if (!usersSnap.empty) {
-            finalRecipientAddress = usersSnap.docs[0].id.toLowerCase();
-          }
-        } else {
-          for (const u of memoryUsers.values()) {
-            if (u.email === finalRecipientEmail) {
-              finalRecipientAddress = u.address;
-              break;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Could not lookup recipient by email:', e);
+    // Auto-discover recipient details using getAllLinkedIdentities
+    if (finalRecipientAddress || finalRecipientEmail) {
+      const rId = await getAllLinkedIdentities({ address: finalRecipientAddress, email: finalRecipientEmail });
+      if (!finalRecipientAddress && rId.addresses.size > 0) {
+        finalRecipientAddress = Array.from(rId.addresses)[0];
+      }
+      if (!finalRecipientEmail && rId.emails.size > 0) {
+        finalRecipientEmail = Array.from(rId.emails)[0];
       }
     }
 
-    if (finalRecipientAddress && !finalRecipientEmail) {
-      try {
-        if (hasFirebaseCredentials) {
-          const userDoc = await db.collection('users').doc(finalRecipientAddress).get();
-          if (userDoc.exists && userDoc.data()?.email) {
-            finalRecipientEmail = userDoc.data()!.email.toLowerCase().trim();
-          }
-        } else {
-          const u = memoryUsers.get(finalRecipientAddress);
-          if (u?.email) finalRecipientEmail = u.email;
-        }
-      } catch (e) {
-        console.warn('Could not lookup recipient email by address:', e);
-      }
-    }
+    // Auto-discover sender details using getAllLinkedIdentities
+    const sId = await getAllLinkedIdentities({ address: finalSenderAddress, email: finalSenderEmail });
 
-    if (finalRecipientAddress && finalRecipientAddress === finalSenderAddress) {
+    if (finalRecipientAddress && sId.addresses.has(finalRecipientAddress)) {
       return res.status(400).json({ error: 'Cannot send friend request to yourself' });
     }
-    if (finalRecipientEmail && finalSenderEmail && finalRecipientEmail === finalSenderEmail) {
+    if (finalRecipientEmail && sId.emails.has(finalRecipientEmail)) {
       return res.status(400).json({ error: 'Cannot send friend request to yourself' });
     }
 
@@ -628,55 +814,38 @@ app.get('/api/friend-requests', async (req, res) => {
     const address = (req.query.address as string || '').toLowerCase().trim();
     const email = (req.query.email as string || '').toLowerCase().trim();
 
-    const all: any[] = hasFirebaseCredentials
-      ? (await db.collection('friend_requests').get()).docs.map((d: any) => d.data())
-      : Array.from(memoryFriendRequests.values());
-
     if (!address && !email) {
       return res.json({ incoming: [], outgoing: [] });
     }
 
-    const myAddresses = new Set<string>();
-    const myEmails = new Set<string>();
+    const { addresses: myAddresses, emails: myEmails } = await getAllLinkedIdentities({ address, email });
     if (address) myAddresses.add(address);
     if (email) myEmails.add(email);
 
-    if (address) {
-      let u: any = null;
-      if (hasFirebaseCredentials) {
-        try {
-          const userDoc = await db.collection('users').doc(address).get();
-          if (userDoc.exists) u = userDoc.data();
-        } catch (err) {
-          console.warn('Could not fetch linked addresses for friend requests query:', err);
-        }
-      } else {
-        u = memoryUsers.get(address);
-      }
-      if (u) {
-        if (u.email) myEmails.add(u.email.toLowerCase().trim());
-        if (u.linkedZkAddress) myAddresses.add(u.linkedZkAddress.toLowerCase().trim());
-        if (u.linkedWalletAddress) myAddresses.add(u.linkedWalletAddress.toLowerCase().trim());
-      }
-    }
+    const all: any[] = hasFirebaseCredentials
+      ? (await db.collection('friend_requests').get()).docs.map((d: any) => d.data())
+      : Array.from(memoryFriendRequests.values());
 
     const incoming = all
       .filter((r: any) => {
-        const rAddr = r.recipientAddress?.toLowerCase();
-        const rMail = r.recipientEmail?.toLowerCase();
+        const rAddr = (r.recipientAddress || '').toLowerCase().trim();
+        const rMail = (r.recipientEmail || '').toLowerCase().trim();
         const isRecipient =
           (rAddr && myAddresses.has(rAddr)) ||
           (rMail && myEmails.has(rMail));
-        const sAddr = r.senderAddress?.toLowerCase();
-        const isSelf = sAddr && myAddresses.has(sAddr);
+        const sAddr = (r.senderAddress || '').toLowerCase().trim();
+        const sMail = (r.senderEmail || '').toLowerCase().trim();
+        const isSelf =
+          (sAddr && myAddresses.has(sAddr)) ||
+          (sMail && myEmails.has(sMail));
         return isRecipient && !isSelf && r.status !== 'canceled';
       })
       .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
 
     const outgoing = all
       .filter((r: any) => {
-        const sAddr = r.senderAddress?.toLowerCase();
-        const sMail = r.senderEmail?.toLowerCase();
+        const sAddr = (r.senderAddress || '').toLowerCase().trim();
+        const sMail = (r.senderEmail || '').toLowerCase().trim();
         const isSender =
           (sAddr && myAddresses.has(sAddr)) ||
           (sMail && myEmails.has(sMail));
@@ -714,6 +883,7 @@ app.patch('/api/friend-requests/:id', async (req, res) => {
       status,
       updatedAt: Date.now(),
       ...(recipientAddress ? { recipientAddress: recipientAddress.toLowerCase().trim() } : {}),
+      ...(recipientEmail ? { recipientEmail: recipientEmail.toLowerCase().trim() } : {}),
     };
 
     if (hasFirebaseCredentials) {
@@ -725,6 +895,18 @@ app.patch('/api/friend-requests/:id', async (req, res) => {
     if (status === 'accepted') {
       const sAddr = (existing.senderAddress || '').toLowerCase().trim();
       const rAddr = (recipientAddress || existing.recipientAddress || '').toLowerCase().trim();
+
+      const sIdentities = await getAllLinkedIdentities({
+        address: sAddr,
+        email: existing.senderEmail,
+      });
+      if (sAddr) sIdentities.addresses.add(sAddr);
+
+      const rIdentities = await getAllLinkedIdentities({
+        address: rAddr,
+        email: recipientEmail || existing.recipientEmail,
+      });
+      if (rAddr) rIdentities.addresses.add(rAddr);
 
       if (sAddr && rAddr && sAddr !== rAddr) {
         const sFriendData = {
@@ -744,24 +926,36 @@ app.patch('/api/friend-requests/:id', async (req, res) => {
         };
 
         if (hasFirebaseCredentials) {
-          await Promise.all([
-            db.collection('users').doc(rAddr).collection('friends').doc(sAddr).set(sFriendData, { merge: true }),
-            db.collection('users').doc(sAddr).collection('friends').doc(rAddr).set(rFriendData, { merge: true }),
-          ]);
+          const ops: Promise<any>[] = [];
+          for (const recipientA of rIdentities.addresses) {
+            ops.push(
+              db.collection('users').doc(recipientA).collection('friends').doc(sAddr).set(sFriendData, { merge: true })
+            );
+          }
+          for (const senderA of sIdentities.addresses) {
+            ops.push(
+              db.collection('users').doc(senderA).collection('friends').doc(rAddr).set(rFriendData, { merge: true })
+            );
+          }
+          await Promise.all(ops);
         } else {
-          let sFriends = memoryFriends.get(rAddr);
-          if (!sFriends) {
-            sFriends = new Map();
-            memoryFriends.set(rAddr, sFriends);
+          for (const recipientA of rIdentities.addresses) {
+            let sFriends = memoryFriends.get(recipientA);
+            if (!sFriends) {
+              sFriends = new Map();
+              memoryFriends.set(recipientA, sFriends);
+            }
+            sFriends.set(sAddr, sFriendData);
           }
-          sFriends.set(sAddr, sFriendData);
 
-          let rFriends = memoryFriends.get(sAddr);
-          if (!rFriends) {
-            rFriends = new Map();
-            memoryFriends.set(sAddr, rFriends);
+          for (const senderA of sIdentities.addresses) {
+            let rFriends = memoryFriends.get(senderA);
+            if (!rFriends) {
+              rFriends = new Map();
+              memoryFriends.set(senderA, rFriends);
+            }
+            rFriends.set(rAddr, rFriendData);
           }
-          rFriends.set(rAddr, rFriendData);
         }
       }
     }

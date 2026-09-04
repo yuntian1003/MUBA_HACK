@@ -284,11 +284,14 @@ export function SplitPage() {
       try {
         const requesterName =
           localStorage.getItem(`nickname-${account.address}`) || account.label || 'Friend';
+        const requesterEmail = (zkAccount?.email || localStorage.getItem(`email-${account.address}`) || '').toLowerCase().trim();
         const requests = shares.map((s) => ({
           requesterAddress: account.address,
           requesterName,
+          requesterEmail,
           payerAddress: s.member.walletAddress,
           payerName: s.member.name,
+          payerEmail: (s.member as any).email || '',
           amountSui: s.amountSui,
           purpose: purpose.trim(),
         }));

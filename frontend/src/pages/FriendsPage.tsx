@@ -65,7 +65,12 @@ function FriendsPageInner() {
     enabled: !!ownerAddress,
   });
 
-  const myEffectiveEmail = (myProfile?.email || zkAccount?.email || '').toLowerCase().trim();
+  const myEffectiveEmail = (
+    myProfile?.email ||
+    zkAccount?.email ||
+    (ownerAddress ? localStorage.getItem(`email-${ownerAddress}`) : '') ||
+    ''
+  ).toLowerCase().trim();
   const myName = myProfile?.nickname || zkAccount?.name || (ownerAddress ? `${ownerAddress.slice(0, 6)}…` : 'Friend');
   const myAvatarColor = myProfile?.avatarColor || AVATAR_COLORS[0];
 
@@ -130,7 +135,7 @@ function FriendsPageInner() {
         email: myEffectiveEmail,
       });
       queryClient.invalidateQueries({ queryKey: ['friend-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['friends', ownerAddress] });
+      queryClient.invalidateQueries({ queryKey: ['friends'] });
     } catch (e) {
       console.error('Failed to accept friend request:', e);
     }
@@ -159,7 +164,7 @@ function FriendsPageInner() {
       if (friend.walletAddress) {
         await removeFriend(ownerAddress, friend.walletAddress);
       }
-      queryClient.invalidateQueries({ queryKey: ['friends', ownerAddress] });
+      queryClient.invalidateQueries({ queryKey: ['friends'] });
     } catch (e) {
       console.error('Failed to remove friend:', e);
     }

@@ -41,7 +41,6 @@ export function ProfilePage() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [linkedZkAddress, setLinkedZkAddress] = useState('');
-  const [linkedWalletAddress, setLinkedWalletAddress] = useState('');
   const [editing, setEditing] = useState(false);
   const [attemptedSaveName, setAttemptedSaveName] = useState(false);
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
@@ -49,15 +48,20 @@ export function ProfilePage() {
   const [copiedZk, setCopiedZk] = useState(false);
   const [saveMsg, setSaveMsg] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
+  const userHandle = displayName?.trim() || (email ? email.split('@')[0] : '') || zkAccount?.name || '';
+  const derivedSuiNS = userHandle ? (userHandle.toLowerCase().endsWith('.sui') ? userHandle.toLowerCase() : `${userHandle.toLowerCase()}.sui`) : null;
+  const effectiveSuiNS = suinsDomainName || derivedSuiNS;
+
   useEffect(() => {
     if (!account) return;
 
     const localNick = localStorage.getItem(`nickname-${account.address}`);
     const localEmail = localStorage.getItem(`email-${account.address}`);
+    const userEmailVal = localEmail || zkAccount?.email || '';
 
     // If nickname/email not set on this wallet address yet, inherit from Google zkAccount!
-    const initialName = localNick || zkAccount?.name || account.label || '';
-    const initialEmail = localEmail || zkAccount?.email || '';
+    const initialName = localNick || zkAccount?.name || account.label || (userEmailVal ? userEmailVal.split('@')[0] : '');
+    const initialEmail = userEmailVal;
 
     setDisplayName(initialName);
     setEmail(initialEmail);
@@ -66,7 +70,6 @@ export function ProfilePage() {
     fetchUser(account.address).then(async (u) => {
       let currentEmail = initialEmail;
       let foundZk = '';
-      let foundWallet = '';
 
       if (u) {
         if (u.nickname) setDisplayName(u.nickname);
@@ -79,7 +82,6 @@ export function ProfilePage() {
 
         if (u.avatarColor) setSelectedColor(u.avatarColor);
         if (u.linkedZkAddress) foundZk = u.linkedZkAddress;
-        if (u.linkedWalletAddress) foundWallet = u.linkedWalletAddress;
       }
 
       // Auto-link if same email has a zkLogin account
@@ -102,7 +104,6 @@ export function ProfilePage() {
       }
 
       setLinkedZkAddress(foundZk || zkAccount?.address || '');
-      setLinkedWalletAddress(foundWallet || (walletAccount?.address !== account.address ? (walletAccount?.address || '') : ''));
     }).catch(console.error);
   }, [account?.address, zkAccount]);
 
@@ -134,13 +135,6 @@ export function ProfilePage() {
     await navigator.clipboard.writeText(account.address);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }
-
-  async function copyZkAddress() {
-    if (!zkAccount?.address) return;
-    await navigator.clipboard.writeText(zkAccount.address);
-    setCopiedZk(true);
-    setTimeout(() => setCopiedZk(false), 2000);
   }
 
   // ── Not connected ────────────────────────────────────────────
@@ -365,7 +359,28 @@ export function ProfilePage() {
               </div>
             ) : (
               <div style={{ textAlign: 'center' }}>
-                <h3 style={{ marginBottom: 4 }}>{displayName || zkAccount?.name || 'Anonymous'}</h3>
+                <h3 style={{ marginBottom: 4 }}>{displayName || zkAccount?.name || userHandle || 'Anonymous'}</h3>
+                {effectiveSuiNS && (
+                  <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+                    <span
+                      className="badge badge-purple"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontWeight: 700,
+                        fontSize: '0.86rem',
+                        padding: '4px 14px',
+                        borderRadius: 20,
+                        background: 'linear-gradient(135deg, rgba(159,157,243,0.18), rgba(159,157,243,0.32))',
+                        color: 'var(--deep)',
+                        border: '1px solid rgba(159,157,243,0.4)',
+                      }}
+                    >
+                      🌐 {effectiveSuiNS}
+                    </span>
+                  </div>
+                )}
                 {(email || zkAccount?.email) ? (
                   <p className="text-xs color-text3" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                     <EmailIcon size={13} color="var(--text-3)" />
@@ -441,17 +456,21 @@ export function ProfilePage() {
                 : <CopyIcon size={16} color="var(--text-3)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />}
             </button>
 
-            {suinsDomainName && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm color-text3 font-medium">SuiNS Domain</span>
+            <div className="flex items-center justify-between">
+              <span className="text-sm color-text3 font-medium">SuiNS Domain</span>
+              {effectiveSuiNS ? (
                 <span
                   className="badge badge-purple"
                   style={{ display: 'flex', alignItems: 'center', gap: 5, fontWeight: 700 }}
                 >
-                  🌐 {suinsDomainName}
+                  🌐 {effectiveSuiNS}
                 </span>
-              </div>
-            )}
+              ) : (
+                <span className="text-xs color-text3" style={{ fontStyle: 'italic' }}>
+                  No .sui domain registered for address
+                </span>
+              )}
+            </div>
 
             {/* ── Linked Google zkLogin Identity Card ──────────────── */}
             <div

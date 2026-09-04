@@ -46,15 +46,31 @@ export function useSuiNSName(address?: string) {
     queryFn: async () => {
       if (!address || !address.startsWith('0x')) return null;
 
+      // 1. Try resolveNameServiceNames (returns array of registered domains for address)
       try {
-        const result = await client.defaultNameServiceName({ address });
-        return result.data.name;
+        const res = await (client as any).resolveNameServiceNames({ address });
+        if (res?.data && res.data.length > 0) {
+          const domain = res.data[0];
+          return domain.endsWith('.sui') ? domain : `${domain}.sui`;
+        }
       } catch (err) {
-        console.warn(`[SuiNS] Failed reverse lookup for ${address}:`, err);
-        return null;
+        // Fall through
       }
+
+      // 2. Try defaultNameServiceName
+      try {
+        const res = await (client as any).defaultNameServiceName({ address });
+        if (res?.data?.name) {
+          const domain = res.data.name;
+          return domain.endsWith('.sui') ? domain : `${domain}.sui`;
+        }
+      } catch (err) {
+        // Fall through
+      }
+
+      return null;
     },
     enabled: !!address && address.startsWith('0x'),
-    staleTime: 120_000,
+    staleTime: 60_000,
   });
 }

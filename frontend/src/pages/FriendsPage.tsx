@@ -11,9 +11,7 @@ import {
   PlusIcon, UserPlusIcon, CheckIcon,
 } from '../components/Icons';
 import {
-  fetchUsers,
   fetchFriends,
-  addFriend,
   removeFriend,
   sendFriendRequest,
   fetchFriendRequests,
@@ -1022,6 +1020,12 @@ function FriendsPageInner() {
               {addFriendMutation.isError && (
                 <p className="text-sm" style={{ color: '#c0446b', marginBottom: 14 }}>
                   ⚠️ Failed to add friend. Make sure the backend is running.
+                </p>
+              )}
+
+              {attemptedAddFriend && !isAddValid && (
+                <p className="text-xs" style={{ color: '#c0392b', marginBottom: 8, textAlign: 'center', fontWeight: 600 }}>
+                  Please enter a valid .sui domain name
                 </p>
               )}
 

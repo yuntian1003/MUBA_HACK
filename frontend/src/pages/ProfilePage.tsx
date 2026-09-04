@@ -41,8 +41,10 @@ export function ProfilePage() {
     return localStorage.getItem('linkedZkAddress') || '';
   });
   const [linkedWalletAddress, setLinkedWalletAddress] = useState<string>(() => {
-    return localStorage.getItem('linkedWalletAddress') || '';
+    const raw = localStorage.getItem('linkedWalletAddress') || '';
+    return raw.toLowerCase().startsWith('0xa91cf') ? '' : raw;
   });
+  const [savedSuiNS, setSavedSuiNS] = useState<string>('');
 
   const effectiveWalletAddr = walletAccount?.address || (account?.isZk ? linkedWalletAddress : account?.address);
   const { data: suinsDomainName } = useSuiNSName(effectiveWalletAddr, account?.address);
@@ -56,11 +58,16 @@ export function ProfilePage() {
   const [saveMsg, setSaveMsg] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   const userHandle = displayName?.trim() || (email ? email.split('@')[0] : '') || zkAccount?.name || '';
-  const derivedSuiNS = userHandle ? (userHandle.toLowerCase().endsWith('.sui') ? userHandle.toLowerCase() : `${userHandle.toLowerCase()}.sui`) : null;
-  const effectiveSuiNS = suinsDomainName || derivedSuiNS;
+  // Real on-chain resolved name or database registered .sui domain only, no spaces or fake domains
+  const effectiveSuiNS = suinsDomainName || savedSuiNS || (userHandle?.toLowerCase().endsWith('.sui') && !userHandle.includes(' ') ? userHandle.toLowerCase() : null);
 
   useEffect(() => {
     if (!account) return;
+
+    // Purge any stale test wallet address from previous sessions
+    if (localStorage.getItem('linkedWalletAddress')?.toLowerCase().startsWith('0xa91cf')) {
+      localStorage.removeItem('linkedWalletAddress');
+    }
 
     const localNick = localStorage.getItem(`nickname-${account.address}`);
     const localEmail = localStorage.getItem(`email-${account.address}`);
@@ -87,25 +94,48 @@ export function ProfilePage() {
         } else if (initialEmail) setEmail(initialEmail);
 
         if (u.avatarColor) setSelectedColor(u.avatarColor);
+        if (u.suins) setSavedSuiNS(u.suins);
       }
 
       const activeWallet = walletAccount?.address || '';
       const realZk = zkAccount?.address || u?.linkedZkAddress || localStorage.getItem('linkedZkAddress') || '';
-      const realWallet = activeWallet || u?.linkedWalletAddress || localStorage.getItem('linkedWalletAddress') || '';
+      let backendWallet = u?.linkedWalletAddress && !u.linkedWalletAddress.toLowerCase().startsWith('0xa91cf') ? u.linkedWalletAddress : '';
+
+      // If zkLogin user has no linked wallet yet, find wallet with same email that has suins
+      if (account.isZk && !backendWallet && !activeWallet && currentEmail) {
+        try {
+          const users = await fetchUsers(currentEmail);
+          const match = users.find((mu: any) =>
+            mu.email?.toLowerCase() === currentEmail.toLowerCase() &&
+            mu.address?.toLowerCase() !== account.address.toLowerCase() &&
+            !mu.address?.toLowerCase().startsWith('0xa91cf')
+          );
+          if (match?.address) {
+            backendWallet = match.address;
+            if (match.suins) setSavedSuiNS(match.suins);
+          }
+        } catch (e) {}
+      }
+
+      const rawStoredWallet = localStorage.getItem('linkedWalletAddress') || '';
+      const storedWallet = rawStoredWallet.toLowerCase().startsWith('0xa91cf') ? '' : rawStoredWallet;
+      const realWallet = activeWallet || backendWallet || storedWallet;
 
       if (activeWallet) {
         localStorage.setItem('linkedWalletAddress', activeWallet);
+      } else if (realWallet) {
+        localStorage.setItem('linkedWalletAddress', realWallet);
       }
 
       setLinkedZkAddress(realZk);
-      setLinkedWalletAddress(activeWallet || realWallet);
+      setLinkedWalletAddress(realWallet);
 
       if (realZk) localStorage.setItem('linkedZkAddress', realZk);
 
       // Save real connected addresses to backend profile
       if (account.address) {
         upsertUser(account.address, displayName || initialName || 'Friend', selectedColor, currentEmail, {
-          linkedWalletAddress: (activeWallet || realWallet) || undefined,
+          linkedWalletAddress: realWallet || undefined,
           linkedZkAddress: realZk || undefined,
         }).catch(console.error);
       }

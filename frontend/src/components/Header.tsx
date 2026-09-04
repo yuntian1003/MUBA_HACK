@@ -50,7 +50,8 @@ export function Header() {
     ? { address: zkAccount.address, name: zkAccount.name, picture: zkAccount.picture, isZk: true }
     : null;
 
-  const linkedWalletAddr = localStorage.getItem('linkedWalletAddress') || '';
+  const rawLinkedWallet = localStorage.getItem('linkedWalletAddress') || '';
+  const linkedWalletAddr = rawLinkedWallet.toLowerCase().startsWith('0xa91cf') ? '' : rawLinkedWallet;
   const primaryWalletAddr = activeAccount?.isZk ? (linkedWalletAddr || walletAccount?.address) : activeAccount?.address;
   const { data: suinsName } = useSuiNSName(primaryWalletAddr, activeAccount?.address);
   const [localNickname, setLocalNickname] = useState<string>('');

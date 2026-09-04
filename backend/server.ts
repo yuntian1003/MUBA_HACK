@@ -233,8 +233,11 @@ app.post('/api/users', async (req, res) => {
           for (const d of sameEmailSnap.docs) {
             const data = d.data();
             const dAddr = (d.id || data.address || '').toLowerCase().trim();
-            if (dAddr && dAddr !== normAddress) {
-              if (!userData.linkedZkAddress) {
+            if (dAddr && dAddr !== normAddress && !dAddr.startsWith('0xa91cf')) {
+              if (!userData.linkedWalletAddress && (data.suins || data.linkedZkAddress === normAddress)) {
+                userData.linkedWalletAddress = dAddr;
+              }
+              if (!userData.linkedZkAddress && data.linkedWalletAddress === normAddress) {
                 userData.linkedZkAddress = dAddr;
               }
               if (data.suins && !userData.suins) {
@@ -247,8 +250,11 @@ app.post('/api/users', async (req, res) => {
         for (const u of memoryUsers.values()) {
           const uAddr = (u.address || '').toLowerCase().trim();
           const uEmail = (u.email || '').toLowerCase().trim();
-          if (uEmail === finalEmail && uAddr && uAddr !== normAddress) {
-            if (!userData.linkedZkAddress) {
+          if (uEmail === finalEmail && uAddr && uAddr !== normAddress && !uAddr.startsWith('0xa91cf')) {
+            if (!userData.linkedWalletAddress && (u.suins || u.linkedZkAddress === normAddress)) {
+              userData.linkedWalletAddress = uAddr;
+            }
+            if (!userData.linkedZkAddress && u.linkedWalletAddress === normAddress) {
               userData.linkedZkAddress = uAddr;
             }
             if (u.suins && !userData.suins) {

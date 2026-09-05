@@ -716,8 +716,10 @@ app.post('/api/payment-requests', async (req, res) => {
         payerEmail: (r.payerEmail || '').trim().toLowerCase(),
         amountSui: Number(r.amountSui),
         purpose: r.purpose || 'Payment Request',
-        status: 'pending',
-        createdAt: Date.now(),
+        status: r.status || 'pending',
+        digest: r.digest || '',
+        createdAt: r.createdAt || Date.now(),
+        paidAt: r.paidAt || (r.status === 'paid' ? Date.now() : undefined),
       };
       if (hasFirebaseCredentials) {
         await db.collection('payment_requests').doc(id).set(data);
@@ -746,7 +748,7 @@ app.get('/api/payment-requests', async (req, res) => {
       : Array.from(memoryPaymentRequests.values());
 
     if (queryAddresses.length === 0 && !queryEmail) {
-      return res.json({ incoming: all, outgoing: [] });
+      return res.json({ incoming: all, outgoing: [], received: [] });
     }
 
     const { addresses: validAddresses, emails: validEmails } = await getAllLinkedIdentities({
@@ -778,7 +780,18 @@ app.get('/api/payment-requests', async (req, res) => {
       })
       .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    res.json({ incoming, outgoing });
+    const received = all
+      .filter((r: any) => {
+        const requesterAddr = (r.requesterAddress || '').toLowerCase().trim();
+        const requesterEmail = (r.requesterEmail || '').toLowerCase().trim();
+        const matchesRecipient =
+          (requesterAddr && validAddresses.has(requesterAddr)) ||
+          (requesterEmail && validEmails.has(requesterEmail));
+        return matchesRecipient && r.status === 'paid';
+      })
+      .sort((a: any, b: any) => (b.paidAt || b.createdAt || 0) - (a.paidAt || a.createdAt || 0));
+
+    res.json({ incoming, outgoing, received });
   } catch (e) {
     console.error('Error fetching payment requests:', e);
     res.status(500).json({ error: 'Failed to fetch payment requests' });

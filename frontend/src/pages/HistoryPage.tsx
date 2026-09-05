@@ -1,6 +1,6 @@
 // src/pages/HistoryPage.tsx
 import { useState } from 'react';
-import { useCurrentAccount } from '@mysten/dapp-kit-react';
+import { useCurrentAccount, useCurrentClient } from '@mysten/dapp-kit-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Avatar } from '../components/Avatar';
@@ -23,10 +23,11 @@ function formatTime(timestamp?: number): string {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-type TabType = 'outgoing' | 'incoming';
+type TabType = 'outgoing' | 'incoming' | 'received';
 
 export function HistoryPage() {
   const walletAccount = useCurrentAccount();
+  const client = useCurrentClient();
   const { zkAccount } = useZkLogin();
   const ownerAddress = (walletAccount?.address ?? zkAccount?.address ?? '').toLowerCase().trim();
   const linkedAddresses = Array.from(new Set([
@@ -61,6 +62,76 @@ export function HistoryPage() {
 
   const incomingRequests = data?.incoming || [];
   const outgoingRequests = data?.outgoing || [];
+  const backendReceived = data?.received || [];
+
+  // ── On-Chain Received Transactions (Backup & Direct Transfers) ──
+  const { data: onChainReceived = [] } = useQuery({
+    queryKey: ['on-chain-received-history', ownerAddress, linkedAddresses],
+    queryFn: async () => {
+      const addressesToQuery = [ownerAddress, ...linkedAddresses].filter(Boolean);
+      const results: any[] = [];
+      for (const addr of addressesToQuery) {
+        try {
+          const res = await (client as any).queryTransactionBlocks({
+            filter: { ToAddress: addr },
+            options: {
+              showEffects: true,
+              showInput: true,
+              showBalanceChanges: true,
+            },
+            limit: 15,
+            order: 'descending',
+          });
+          if (res?.data) {
+            for (const tx of res.data) {
+              let receivedAmount = 0;
+              if (tx.balanceChanges) {
+                for (const bc of tx.balanceChanges) {
+                  const bcOwner = bc.owner?.AddressOwner || bc.owner;
+                  if (
+                    typeof bcOwner === 'string' &&
+                    bcOwner.toLowerCase() === addr.toLowerCase() &&
+                    bc.coinType?.includes('::sui::SUI')
+                  ) {
+                    const diff = Number(bc.amount) / 1e9;
+                    if (diff > 0) {
+                      receivedAmount += diff;
+                    }
+                  }
+                }
+              }
+              const sender = tx.transaction?.data?.sender || '';
+              if (receivedAmount > 0 && sender.toLowerCase() !== addr.toLowerCase()) {
+                results.push({
+                  id: 'onchain_' + tx.digest,
+                  digest: tx.digest,
+                  amountSui: receivedAmount,
+                  payerAddress: sender,
+                  payerName: `${sender.slice(0, 6)}…${sender.slice(-4)}`,
+                  purpose: 'On-chain SUI Transfer',
+                  createdAt: tx.timestampMs ? Number(tx.timestampMs) : Date.now(),
+                  paidAt: tx.timestampMs ? Number(tx.timestampMs) : Date.now(),
+                  status: 'paid',
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Could not query on-chain txs for', addr, e);
+        }
+      }
+      return results;
+    },
+    enabled: !!ownerAddress && !!client,
+    staleTime: 10_000,
+  });
+
+  // Merge backend received records with any on-chain detected incoming transactions (deduped by digest)
+  const backendDigests = new Set(backendReceived.map((r: any) => r.digest).filter(Boolean));
+  const uniqueOnChain = onChainReceived.filter((tx: any) => !backendDigests.has(tx.digest));
+  const receivedPayments = [...backendReceived, ...uniqueOnChain].sort(
+    (a: any, b: any) => (b.paidAt || b.createdAt || 0) - (a.paidAt || a.createdAt || 0)
+  );
 
   // ── Decline Request ─────────────────────────────────────────
   const declineMutation = useMutation({
@@ -161,16 +232,16 @@ export function HistoryPage() {
             onClick={() => setActiveTab('outgoing')}
             style={{
               flex: 1,
-              padding: '10px 8px',
+              padding: '10px 6px',
               borderRadius: 12,
               border: 'none',
               fontWeight: 700,
-              fontSize: '0.86rem',
+              fontSize: '0.80rem',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: 6,
+              gap: 5,
               background: activeTab === 'outgoing' ? 'var(--surface)' : 'transparent',
               color: activeTab === 'outgoing' ? 'var(--deep)' : 'var(--text-3)',
               boxShadow: activeTab === 'outgoing' ? 'var(--shadow-sm)' : 'none',
@@ -185,16 +256,16 @@ export function HistoryPage() {
             onClick={() => setActiveTab('incoming')}
             style={{
               flex: 1,
-              padding: '10px 8px',
+              padding: '10px 6px',
               borderRadius: 12,
               border: 'none',
               fontWeight: 700,
-              fontSize: '0.86rem',
+              fontSize: '0.80rem',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: 6,
+              gap: 5,
               background: activeTab === 'incoming' ? 'var(--surface)' : 'transparent',
               color: activeTab === 'incoming' ? 'var(--deep)' : 'var(--text-3)',
               boxShadow: activeTab === 'incoming' ? 'var(--shadow-sm)' : 'none',
@@ -211,6 +282,41 @@ export function HistoryPage() {
                 borderRadius: 10,
               }}>
                 {incomingRequests.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('received')}
+            style={{
+              flex: 1,
+              padding: '10px 6px',
+              borderRadius: 12,
+              border: 'none',
+              fontWeight: 700,
+              fontSize: '0.80rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 5,
+              background: activeTab === 'received' ? 'var(--surface)' : 'transparent',
+              color: activeTab === 'received' ? 'var(--deep)' : 'var(--text-3)',
+              boxShadow: activeTab === 'received' ? 'var(--shadow-sm)' : 'none',
+              transition: 'all 200ms ease',
+            }}
+          >
+            Received Payments ({receivedPayments.length})
+            {receivedPayments.length > 0 && (
+              <span style={{
+                background: '#3a7a3c',
+                color: '#fff',
+                fontSize: '0.68rem',
+                padding: '1px 6px',
+                borderRadius: 10,
+              }}>
+                {receivedPayments.length}
               </span>
             )}
           </button>
@@ -401,6 +507,100 @@ export function HistoryPage() {
                 <h3>No Received Requests</h3>
                 <p className="text-sm color-text3" style={{ maxWidth: 320 }}>
                   You have no pending payment requests from friends right now.
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* ── TAB 3: RECEIVED PAYMENTS (Payments received from friends) ── */}
+        {activeTab === 'received' && (
+          <motion.div key="tab-received" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+            {isLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {[1, 2, 3].map((n) => (
+                  <div key={n} className="skeleton" style={{ height: 72, borderRadius: 16 }} />
+                ))}
+              </div>
+            ) : receivedPayments.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {receivedPayments.map((item: any) => (
+                  <div
+                    key={item.id || item.digest}
+                    className="clay-card flat"
+                    style={{
+                      padding: '16px 18px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                      <Avatar
+                        name={item.payerName || item.payerAddress}
+                        color={AVATAR_COLORS[2] || '#C9EBCA'}
+                        size="md"
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span className="font-semibold text-sm truncate" style={{ color: 'var(--deep)' }}>
+                            From {item.payerName || (item.payerAddress ? `${item.payerAddress.slice(0, 6)}…${item.payerAddress.slice(-4)}` : 'Friend')}
+                          </span>
+                          <span
+                            className="badge"
+                            style={{
+                              fontSize: '0.72rem',
+                              padding: '2px 8px',
+                              background: 'rgba(201,235,202,0.85)',
+                              color: '#256328',
+                              fontWeight: 700,
+                            }}
+                          >
+                            ✓ Received
+                          </span>
+                        </div>
+
+                        <div className="text-xs color-text3 mt-4 truncate">
+                          {item.purpose || 'Split Payment'} · {formatTime(item.paidAt || item.createdAt)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div className="amount-big" style={{ fontSize: '1.25rem', color: '#256328' }}>
+                        <span className="amount-currency" style={{ fontSize: '0.75rem', color: '#256328' }}>+SUI</span>
+                        {Number(item.amountSui).toFixed(3)}
+                      </div>
+
+                      {item.digest && (
+                        <a
+                          href={`https://testnet.suivision.xyz/txblock/${item.digest}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs color-purple"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            marginTop: 4,
+                            fontWeight: 700,
+                          }}
+                        >
+                          <LinkIcon size={12} color="var(--purple)" strokeWidth={2.2} />
+                          SuiVision
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '48px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                <EmptyBoxIcon size={48} color="var(--lavender)" strokeWidth={1.3} />
+                <h3>No Received Payments Yet</h3>
+                <p className="text-sm color-text3" style={{ maxWidth: 320 }}>
+                  When friends pay your requests or send you SUI on SmartSplit, completed transactions will show up here.
                 </p>
               </div>
             )}

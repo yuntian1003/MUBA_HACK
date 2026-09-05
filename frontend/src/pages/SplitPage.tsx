@@ -312,7 +312,29 @@ export function SplitPage() {
       purpose,
       direction,
     });
-    if (res) setStep(4);
+    if (res?.digest) {
+      try {
+        const senderName =
+          localStorage.getItem(`nickname-${account.address}`) || account.label || 'Friend';
+        const senderEmail = (zkAccount?.email || localStorage.getItem(`email-${account.address}`) || '').toLowerCase().trim();
+        const records = shares.map((s) => ({
+          requesterAddress: (s.member.linkedWalletAddress || s.member.walletAddress).trim(),
+          requesterName: s.member.name,
+          requesterEmail: (s.member as any).email || '',
+          payerAddress: account.address,
+          payerName: senderName,
+          payerEmail: senderEmail,
+          amountSui: s.amountSui,
+          purpose: purpose.trim() || 'Direct Split Payment',
+          status: 'paid' as const,
+          digest: res.digest,
+        }));
+        await createPaymentRequests(records);
+      } catch (err) {
+        console.warn('Could not save direct payment history:', err);
+      }
+      setStep(4);
+    }
   }
 
   function handleReset() {

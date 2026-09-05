@@ -373,6 +373,7 @@ p {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .header-logo {
@@ -424,6 +425,7 @@ p {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .wallet-pill {
@@ -438,6 +440,50 @@ p {
   font-weight: 600;
   color: var(--deep);
   box-shadow: var(--shadow-sm);
+  min-width: 0;
+}
+
+.header-logout {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .header {
+    padding: 10px 12px;
+  }
+
+  .header-inner {
+    gap: 8px;
+  }
+
+  .header-brand {
+    gap: 8px !important;
+    flex-shrink: 0;
+  }
+
+  .header-right {
+    gap: 5px !important;
+  }
+
+  .wallet-pill {
+    padding-right: 7px;
+  }
+
+  .wallet-pill > span {
+    max-width: 76px !important;
+  }
+
+  .header-logout {
+    padding: 7px !important;
+    width: 34px;
+    height: 34px;
+    justify-content: center;
+  }
+
+  .header-logout span {
+    display: none;
+  }
 }
 
 .wallet-dot {

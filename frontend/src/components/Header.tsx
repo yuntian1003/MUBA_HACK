@@ -85,7 +85,7 @@ export function Header() {
     <>
       <header className="header">
         <div className="header-inner">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="header-brand" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {/* Hamburger 3-Line Menu Button */}
             <button
               onClick={() => setSidebarOpen(true)}
@@ -119,7 +119,7 @@ export function Header() {
           <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {activeAccount ? (
               <>
-                <div className="wallet-pill" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <div className="wallet-pill" style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
                   {zkAccount?.picture ? (
                     <img
                       src={zkAccount.picture}
@@ -153,13 +153,13 @@ export function Header() {
                   <ConnectButton />
                 )}
                 <button
-                  className="btn btn-ghost btn-sm"
+                  className="btn btn-ghost btn-sm header-logout"
                   onClick={() => (activeAccount.isZk ? handleLogout() : disconnectWallet())}
                   title="Disconnect account"
                   style={{ display: 'flex', alignItems: 'center', gap: 5 }}
                 >
                   <LogoutIcon size={14} color="var(--text-2)" strokeWidth={2} />
-                  Logout
+                  <span>Logout</span>
                 </button>
               </>
             ) : (

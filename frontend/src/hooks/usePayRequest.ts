@@ -1,7 +1,7 @@
 // src/hooks/usePayRequest.ts
 import { useState } from 'react';
 import { Transaction } from '@mysten/sui/transactions';
-import { useCurrentClient, useDAppKit } from '@mysten/dapp-kit-react';
+import { useCurrentAccount, useCurrentClient, useDAppKit } from '@mysten/dapp-kit-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { MIST_PER_SUI } from '../constants';
 import { updatePaymentRequest } from '../api';
@@ -9,6 +9,7 @@ import type { PaymentRequest } from '../types';
 
 export function usePayRequest() {
   const client = useCurrentClient();
+  const walletAccount = useCurrentAccount();
   const { signAndExecuteTransaction } = useDAppKit();
   const queryClient = useQueryClient();
 
@@ -17,6 +18,11 @@ export function usePayRequest() {
   const [successDigest, setSuccessDigest] = useState<string | null>(null);
 
   async function pay(request: PaymentRequest): Promise<string | null> {
+    if (!walletAccount) {
+      setPayError('No Sui Wallet connected. Please connect your Slush Wallet or Sui Wallet (top right) to sign & pay SUI on Testnet.');
+      return null;
+    }
+
     if (!request.requesterAddress || !request.requesterAddress.startsWith('0x')) {
       setPayError('Invalid requester wallet address');
       return null;

@@ -4,7 +4,7 @@ import { useCurrentAccount, useCurrentClient, useDAppKit } from '@mysten/dapp-ki
 import { useQueryClient } from '@tanstack/react-query';
 import type { Member } from '../types';
 import { MIST_PER_SUI } from '../constants';
-import { useZkLogin } from './useZkLogin';
+
 
 export interface RecipientShare {
   member: Member;
@@ -25,8 +25,6 @@ export interface SplitResult {
 export function useSplitTransaction() {
   const client = useCurrentClient();
   const walletAccount = useCurrentAccount();
-  const { zkAccount } = useZkLogin();
-  const activeAddress = walletAccount?.address || zkAccount?.address;
   const { signAndExecuteTransaction } = useDAppKit();
   const queryClient = useQueryClient();
 
@@ -35,8 +33,8 @@ export function useSplitTransaction() {
   const [result, setResult] = useState<SplitResult | null>(null);
 
   async function execute(params: SplitParams): Promise<SplitResult | null> {
-    if (!activeAddress) {
-      setError('Please connect a Sui wallet or sign in with Google (zkLogin) to split expenses.');
+    if (!walletAccount) {
+      setError('No Sui Wallet connected. Please connect your Slush Wallet or Sui Wallet (top right) to sign & execute SUI payments on Testnet.');
       return null;
     }
 

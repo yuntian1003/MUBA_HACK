@@ -285,17 +285,43 @@ export function SplitPage() {
         const requesterName =
           localStorage.getItem(`nickname-${account.address}`) || account.label || 'Friend';
         const requesterEmail = (zkAccount?.email || localStorage.getItem(`email-${account.address}`) || '').toLowerCase().trim();
-        const requests = shares.map((s) => ({
-          requesterAddress: account.address,
-          requesterName,
-          requesterEmail,
-          payerAddress: s.member.walletAddress,
-          payerName: s.member.name,
-          payerEmail: (s.member as any).email || '',
-          amountSui: s.amountSui,
-          purpose: purpose.trim(),
-        }));
-        await createPaymentRequests(requests);
+
+        // Build requests — use the member's original address (m.id is the key address used
+        // when the friend was added) as payerAddress so the payer can find the request,
+        // regardless of which wallet (zkLogin vs extension) they are currently logged in with.
+        const requests = shares.map((s) => {
+          // s.member.id is the original address key; walletAddress may have been overridden
+          // by linkedWalletAddress in apiUserToMember. Use the raw original address for matching.
+          const rawOriginalAddress = s.member.id.startsWith('0x') ? s.member.id : s.member.walletAddress;
+          const linkedWallet = s.member.linkedWalletAddress;
+          const linkedZk = s.member.linkedZkAddress;
+          // Prefer linked wallet (so payer can find it via wallet extension), fall back to original
+          const payerAddr = (linkedWallet && linkedWallet.startsWith('0x'))
+            ? linkedWallet
+            : (rawOriginalAddress || s.member.walletAddress || '');
+          return {
+            requesterAddress: account.address,
+            requesterName,
+            requesterEmail,
+            payerAddress: payerAddr,
+            payerAddressAlt: linkedZk || rawOriginalAddress, // extra field for cross-wallet lookup
+            payerName: s.member.name,
+            payerEmail: (s.member as any).email || '',
+            amountSui: s.amountSui,
+            purpose: purpose.trim(),
+          };
+        });
+
+        // Guard: at least one request must have a valid payerAddress
+        const validRequests = requests.filter((r) => r.payerAddress && r.payerAddress.startsWith('0x'));
+        if (validRequests.length === 0) {
+          throw new Error(
+            'Could not determine a valid wallet address for the selected friend(s). ' +
+            'Make sure they have a linked Sui wallet address in their profile.'
+          );
+        }
+
+        await createPaymentRequests(validRequests);
         setRequestSent(true);
         setStep(4);
       } catch (err: any) {

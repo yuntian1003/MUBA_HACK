@@ -21,6 +21,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       });
     }
     db = admin.firestore();
+    db.settings({ ignoreUndefinedProperties: true });
     hasFirebaseCredentials = true;
     console.log('Firebase initialized from FIREBASE_SERVICE_ACCOUNT environment variable.');
   } catch (err) {
@@ -39,6 +40,7 @@ if (!hasFirebaseCredentials) {
         });
       }
       db = admin.firestore();
+      db.settings({ ignoreUndefinedProperties: true });
       hasFirebaseCredentials = true;
       console.log('Firebase initialized from local firebase-key.json file.');
     } catch (err) {
@@ -706,12 +708,14 @@ app.post('/api/payment-requests', async (req, res) => {
         continue;
       }
       const id = 'payreq_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-      const data = {
+      const data: any = {
         id,
         requesterAddress: r.requesterAddress.trim(),
         requesterName: r.requesterName || 'Requester',
         requesterEmail: (r.requesterEmail || '').trim().toLowerCase(),
         payerAddress: r.payerAddress.trim(),
+        // Store alternate payer address (e.g. linked zkLogin address) for cross-wallet lookup
+        payerAddressAlt: r.payerAddressAlt ? r.payerAddressAlt.trim() : '',
         payerName: r.payerName || 'Friend',
         payerEmail: (r.payerEmail || '').trim().toLowerCase(),
         amountSui: Number(r.amountSui),
@@ -719,8 +723,10 @@ app.post('/api/payment-requests', async (req, res) => {
         status: r.status || 'pending',
         digest: r.digest || '',
         createdAt: r.createdAt || Date.now(),
-        paidAt: r.paidAt || (r.status === 'paid' ? Date.now() : undefined),
       };
+      if (r.paidAt || r.status === 'paid') {
+        data.paidAt = r.paidAt || Date.now();
+      }
       if (hasFirebaseCredentials) {
         await db.collection('payment_requests').doc(id).set(data);
       } else {
@@ -732,7 +738,7 @@ app.post('/api/payment-requests', async (req, res) => {
     res.json({ success: true, count: created.length, requests: created });
   } catch (e) {
     console.error('Error creating payment requests:', e);
-    res.status(500).json({ error: 'Failed to create payment requests' });
+    res.status(500).json({ error: 'Failed to create payment requests', details: e instanceof Error ? e.message : String(e) });
   }
 });
 
@@ -761,9 +767,12 @@ app.get('/api/payment-requests', async (req, res) => {
     const incoming = all
       .filter((r: any) => {
         const payerAddr = (r.payerAddress || '').toLowerCase().trim();
+        const payerAddrAlt = (r.payerAddressAlt || '').toLowerCase().trim();
         const payerEmail = (r.payerEmail || '').toLowerCase().trim();
+        // Match by primary payer address, alternate address (e.g. linked zkLogin/wallet), or email
         const matchesPayer =
           (payerAddr && validAddresses.has(payerAddr)) ||
+          (payerAddrAlt && validAddresses.has(payerAddrAlt)) ||
           (payerEmail && validEmails.has(payerEmail));
         return matchesPayer && r.status === 'pending';
       })

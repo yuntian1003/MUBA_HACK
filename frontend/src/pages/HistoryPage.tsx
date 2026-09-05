@@ -23,7 +23,7 @@ function formatTime(timestamp?: number): string {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-type TabType = 'outgoing' | 'incoming' | 'received';
+type TabType = 'outgoing' | 'incoming' | 'received' | 'sent';
 
 export function HistoryPage() {
   const walletAccount = useCurrentAccount();
@@ -63,6 +63,7 @@ export function HistoryPage() {
   const incomingRequests = data?.incoming || [];
   const outgoingRequests = data?.outgoing || [];
   const backendReceived = data?.received || [];
+  const backendSent = data?.sent || [];
 
   // ── On-Chain Received Transactions (Backup & Direct Transfers) ──
   const { data: onChainReceived = [] } = useQuery({
@@ -130,6 +131,79 @@ export function HistoryPage() {
   const backendDigests = new Set(backendReceived.map((r: any) => r.digest).filter(Boolean));
   const uniqueOnChain = onChainReceived.filter((tx: any) => !backendDigests.has(tx.digest));
   const receivedPayments = [...backendReceived, ...uniqueOnChain].sort(
+    (a: any, b: any) => (b.paidAt || b.createdAt || 0) - (a.paidAt || a.createdAt || 0)
+  );
+
+  // ── On-Chain Sent Transactions ─────────────────────────────────
+  const { data: onChainSent = [] } = useQuery({
+    queryKey: ['on-chain-sent-history', ownerAddress, linkedAddresses],
+    queryFn: async () => {
+      const addressesToQuery = [ownerAddress, ...linkedAddresses].filter(Boolean);
+      const results: any[] = [];
+      for (const addr of addressesToQuery) {
+        try {
+          const res = await (client as any).queryTransactionBlocks({
+            filter: { FromAddress: addr },
+            options: {
+              showEffects: true,
+              showInput: true,
+              showBalanceChanges: true,
+            },
+            limit: 15,
+            order: 'descending',
+          });
+          if (res?.data) {
+            for (const tx of res.data) {
+              let sentAmount = 0;
+              let recipientAddress = '';
+              if (tx.balanceChanges) {
+                for (const bc of tx.balanceChanges) {
+                  const bcOwner = bc.owner?.AddressOwner || bc.owner;
+                  if (typeof bcOwner !== 'string') continue;
+                  if (bcOwner.toLowerCase() === addr.toLowerCase()) {
+                    // Negative balance change = amount leaving sender
+                    const diff = Number(bc.amount) / 1e9;
+                    if (diff < 0 && bc.coinType?.includes('::sui::SUI')) {
+                      sentAmount += Math.abs(diff);
+                    }
+                  } else if (bc.coinType?.includes('::sui::SUI')) {
+                    const diff = Number(bc.amount) / 1e9;
+                    if (diff > 0) {
+                      recipientAddress = bcOwner;
+                    }
+                  }
+                }
+              }
+              // Only include transfers to someone else (not gas-only txs)
+              if (sentAmount > 0 && recipientAddress && recipientAddress.toLowerCase() !== addr.toLowerCase()) {
+                results.push({
+                  id: 'onchain_sent_' + tx.digest,
+                  digest: tx.digest,
+                  amountSui: sentAmount,
+                  recipientAddress,
+                  recipientName: `${recipientAddress.slice(0, 6)}…${recipientAddress.slice(-4)}`,
+                  purpose: 'On-chain SUI Transfer',
+                  createdAt: tx.timestampMs ? Number(tx.timestampMs) : Date.now(),
+                  paidAt: tx.timestampMs ? Number(tx.timestampMs) : Date.now(),
+                  status: 'paid',
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Could not query on-chain sent txs for', addr, e);
+        }
+      }
+      return results;
+    },
+    enabled: !!ownerAddress && !!client,
+    staleTime: 10_000,
+  });
+
+  // Merge backend sent records with on-chain outgoing transactions (deduped)
+  const backendSentDigests = new Set(backendSent.map((r: any) => r.digest).filter(Boolean));
+  const uniqueOnChainSent = onChainSent.filter((tx: any) => !backendSentDigests.has(tx.digest));
+  const sentPayments = [...backendSent, ...uniqueOnChainSent].sort(
     (a: any, b: any) => (b.paidAt || b.createdAt || 0) - (a.paidAt || a.createdAt || 0)
   );
 
@@ -307,7 +381,7 @@ export function HistoryPage() {
               transition: 'all 200ms ease',
             }}
           >
-            Received Payments ({receivedPayments.length})
+            Received ({receivedPayments.length})
             {receivedPayments.length > 0 && (
               <span style={{
                 background: '#3a7a3c',
@@ -317,6 +391,41 @@ export function HistoryPage() {
                 borderRadius: 10,
               }}>
                 {receivedPayments.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('sent')}
+            style={{
+              flex: 1,
+              padding: '10px 6px',
+              borderRadius: 12,
+              border: 'none',
+              fontWeight: 700,
+              fontSize: '0.80rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 5,
+              background: activeTab === 'sent' ? 'var(--surface)' : 'transparent',
+              color: activeTab === 'sent' ? 'var(--deep)' : 'var(--text-3)',
+              boxShadow: activeTab === 'sent' ? 'var(--shadow-sm)' : 'none',
+              transition: 'all 200ms ease',
+            }}
+          >
+            Sent ({sentPayments.length})
+            {sentPayments.length > 0 && (
+              <span style={{
+                background: 'var(--purple)',
+                color: '#fff',
+                fontSize: '0.68rem',
+                padding: '1px 6px',
+                borderRadius: 10,
+              }}>
+                {sentPayments.length}
               </span>
             )}
           </button>
@@ -601,6 +710,105 @@ export function HistoryPage() {
                 <h3>No Received Payments Yet</h3>
                 <p className="text-sm color-text3" style={{ maxWidth: 320 }}>
                   When friends pay your requests or send you SUI on SmartSplit, completed transactions will show up here.
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* ── TAB 4: SENT PAYMENTS (Payments you sent to friends) ── */}
+        {activeTab === 'sent' && (
+          <motion.div key="tab-sent" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+            {isLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {[1, 2, 3].map((n) => (
+                  <div key={n} className="skeleton" style={{ height: 72, borderRadius: 16 }} />
+                ))}
+              </div>
+            ) : sentPayments.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {sentPayments.map((item: any) => (
+                  <div
+                    key={item.id || item.digest}
+                    className="clay-card flat"
+                    style={{
+                      padding: '16px 18px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                      <Avatar
+                        name={item.recipientName || item.requesterName || item.recipientAddress || 'Friend'}
+                        color={AVATAR_COLORS[1]}
+                        size="md"
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span className="font-semibold text-sm truncate" style={{ color: 'var(--deep)' }}>
+                            To {item.recipientName || item.requesterName ||
+                              (item.recipientAddress
+                                ? `${item.recipientAddress.slice(0, 6)}…${item.recipientAddress.slice(-4)}`
+                                : item.requesterAddress
+                                ? `${item.requesterAddress.slice(0, 6)}…${item.requesterAddress.slice(-4)}`
+                                : 'Friend')}
+                          </span>
+                          <span
+                            className="badge"
+                            style={{
+                              fontSize: '0.72rem',
+                              padding: '2px 8px',
+                              background: 'rgba(159,157,243,0.18)',
+                              color: 'var(--purple)',
+                              fontWeight: 700,
+                            }}
+                          >
+                            ✓ Sent
+                          </span>
+                        </div>
+
+                        <div className="text-xs color-text3 mt-4 truncate">
+                          {item.purpose || 'Split Payment'} · {formatTime(item.paidAt || item.createdAt)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div className="amount-big" style={{ fontSize: '1.25rem', color: '#c0392b' }}>
+                        <span className="amount-currency" style={{ fontSize: '0.75rem', color: '#c0392b' }}>-SUI</span>
+                        {Number(item.amountSui).toFixed(3)}
+                      </div>
+
+                      {item.digest && (
+                        <a
+                          href={`https://testnet.suivision.xyz/txblock/${item.digest}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs color-purple"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            marginTop: 4,
+                            fontWeight: 700,
+                          }}
+                        >
+                          <LinkIcon size={12} color="var(--purple)" strokeWidth={2.2} />
+                          SuiVision
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '48px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                <EmptyBoxIcon size={48} color="var(--lavender)" strokeWidth={1.3} />
+                <h3>No Sent Payments Yet</h3>
+                <p className="text-sm color-text3" style={{ maxWidth: 320 }}>
+                  When you pay a friend's request or send SUI via Split, your payment history will appear here.
                 </p>
               </div>
             )}

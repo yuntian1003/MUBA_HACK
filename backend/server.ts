@@ -800,7 +800,21 @@ app.get('/api/payment-requests', async (req, res) => {
       })
       .sort((a: any, b: any) => (b.paidAt || b.createdAt || 0) - (a.paidAt || a.createdAt || 0));
 
-    res.json({ incoming, outgoing, received });
+    // Payments the user actually SENT (they were the payer and status is paid)
+    const sent = all
+      .filter((r: any) => {
+        const payerAddr = (r.payerAddress || '').toLowerCase().trim();
+        const payerAddrAlt = (r.payerAddressAlt || '').toLowerCase().trim();
+        const payerEmail = (r.payerEmail || '').toLowerCase().trim();
+        const matchesPayer =
+          (payerAddr && validAddresses.has(payerAddr)) ||
+          (payerAddrAlt && validAddresses.has(payerAddrAlt)) ||
+          (payerEmail && validEmails.has(payerEmail));
+        return matchesPayer && r.status === 'paid';
+      })
+      .sort((a: any, b: any) => (b.paidAt || b.createdAt || 0) - (a.paidAt || a.createdAt || 0));
+
+    res.json({ incoming, outgoing, received, sent });
   } catch (e) {
     console.error('Error fetching payment requests:', e);
     res.status(500).json({ error: 'Failed to fetch payment requests' });

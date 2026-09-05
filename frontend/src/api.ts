@@ -114,7 +114,7 @@ export async function fetchPaymentRequests(
   address: string,
   email?: string,
   additionalAddresses: string[] = [],
-): Promise<{ incoming: any[]; outgoing: any[]; received: any[] }> {
+): Promise<{ incoming: any[]; outgoing: any[]; received: any[]; sent: any[] }> {
   const params = new URLSearchParams();
   const addresses = new Set(
     [address, ...additionalAddresses]

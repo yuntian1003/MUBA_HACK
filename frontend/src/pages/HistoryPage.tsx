@@ -416,7 +416,7 @@ export function HistoryPage() {
               transition: 'all 200ms ease',
             }}
           >
-            Sent ({sentPayments.length})
+            Sent Payment ({sentPayments.length})
             {sentPayments.length > 0 && (
               <span style={{
                 background: 'var(--purple)',

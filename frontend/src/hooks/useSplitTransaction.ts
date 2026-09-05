@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Transaction } from '@mysten/sui/transactions';
-import { useCurrentAccount, useCurrentClient, useDAppKit } from '@mysten/dapp-kit-react';
+import { useCurrentAccount, useCurrentClient, useDAppKit, useWallets } from '@mysten/dapp-kit-react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Member } from '../types';
 import { MIST_PER_SUI } from '../constants';
@@ -25,7 +25,8 @@ export interface SplitResult {
 export function useSplitTransaction() {
   const client = useCurrentClient();
   const walletAccount = useCurrentAccount();
-  const { signAndExecuteTransaction } = useDAppKit();
+  const wallets = useWallets();
+  const dAppKit = useDAppKit();
   const queryClient = useQueryClient();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -33,8 +34,22 @@ export function useSplitTransaction() {
   const [result, setResult] = useState<SplitResult | null>(null);
 
   async function execute(params: SplitParams): Promise<SplitResult | null> {
-    if (!walletAccount) {
-      setError('No Sui Wallet connected. Please connect your Slush Wallet or Sui Wallet (top right) to sign & execute SUI payments on Testnet.');
+    let activeAccount = walletAccount;
+
+    // Auto-connect browser wallet extension (Slush Wallet / Sui Wallet) if installed and not connected yet
+    if (!activeAccount && wallets && wallets.length > 0) {
+      try {
+        const connResult = await dAppKit.connectWallet({ wallet: wallets[0] });
+        if (connResult?.accounts && connResult.accounts.length > 0) {
+          activeAccount = connResult.accounts[0];
+        }
+      } catch (connErr) {
+        console.warn('Auto-connect wallet error:', connErr);
+      }
+    }
+
+    if (!activeAccount) {
+      setError('No Sui Wallet connected. Please connect your Slush Wallet or Sui Wallet extension to sign & execute SUI payments on Testnet.');
       return null;
     }
 
@@ -106,7 +121,10 @@ export function useSplitTransaction() {
       });
 
       const txResult = await Promise.race([
-        signAndExecuteTransaction({ transaction: tx }),
+        dAppKit.signAndExecuteTransaction({
+          transaction: tx,
+          account: activeAccount,
+        }),
         timeoutPromise,
       ]);
 

@@ -1,7 +1,7 @@
 // src/hooks/usePayRequest.ts
 import { useState } from 'react';
 import { Transaction } from '@mysten/sui/transactions';
-import { useCurrentAccount, useCurrentClient, useDAppKit } from '@mysten/dapp-kit-react';
+import { useCurrentAccount, useCurrentClient, useDAppKit, useWallets } from '@mysten/dapp-kit-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { MIST_PER_SUI } from '../constants';
 import { updatePaymentRequest } from '../api';
@@ -10,7 +10,8 @@ import type { PaymentRequest } from '../types';
 export function usePayRequest() {
   const client = useCurrentClient();
   const walletAccount = useCurrentAccount();
-  const { signAndExecuteTransaction } = useDAppKit();
+  const wallets = useWallets();
+  const dAppKit = useDAppKit();
   const queryClient = useQueryClient();
 
   const [isPaying, setIsPaying] = useState(false);
@@ -18,11 +19,6 @@ export function usePayRequest() {
   const [successDigest, setSuccessDigest] = useState<string | null>(null);
 
   async function pay(request: PaymentRequest): Promise<string | null> {
-    if (!walletAccount) {
-      setPayError('No Sui Wallet connected. Please connect your Slush Wallet or Sui Wallet (top right) to sign & pay SUI on Testnet.');
-      return null;
-    }
-
     if (!request.requesterAddress || !request.requesterAddress.startsWith('0x')) {
       setPayError('Invalid requester wallet address');
       return null;
@@ -41,12 +37,35 @@ export function usePayRequest() {
     setPayError(null);
     setSuccessDigest(null);
 
+    let activeAccount = walletAccount;
+
+    // Auto-connect browser wallet extension (Slush Wallet / Sui Wallet) if installed and not connected yet
+    if (!activeAccount && wallets && wallets.length > 0) {
+      try {
+        const connResult = await dAppKit.connectWallet({ wallet: wallets[0] });
+        if (connResult?.accounts && connResult.accounts.length > 0) {
+          activeAccount = connResult.accounts[0];
+        }
+      } catch (connErr) {
+        console.warn('Auto-connect wallet error:', connErr);
+      }
+    }
+
+    if (!activeAccount) {
+      setPayError('No Sui Wallet extension found or connected. Please connect your Slush Wallet or Sui Wallet extension to pay.');
+      setIsPaying(false);
+      return null;
+    }
+
     try {
       const tx = new Transaction();
       const [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(mistAmount)]);
       tx.transferObjects([coin], tx.pure.address(request.requesterAddress.trim()));
 
-      const txResult = await signAndExecuteTransaction({ transaction: tx });
+      const txResult = await dAppKit.signAndExecuteTransaction({
+        transaction: tx,
+        account: activeAccount,
+      });
 
       if ((txResult as any).$kind === 'FailedTransaction') {
         const failureMsg =
@@ -107,3 +126,4 @@ export function usePayRequest() {
 
   return { pay, isPaying, payError, successDigest, resetPay };
 }
+

@@ -149,6 +149,9 @@ export function Header() {
                     {displayUsername}
                   </span>
                 </div>
+                {activeAccount.isZk && !walletAccount && (
+                  <ConnectButton />
+                )}
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => (activeAccount.isZk ? handleLogout() : disconnectWallet())}

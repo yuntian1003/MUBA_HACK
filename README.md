@@ -39,7 +39,7 @@ This is non-custodial: SmartSplit never receives or stores user funds. If a tran
 The Move package also contains reusable `execute_equal_split` and `execute_custom_split` entry functions. It emits `SplitExecuted` and `RecipientPaid` events and returns rounding dust or excess payment to the payer. The current frontend payment path uses direct wallet PTBs rather than calling those Move entry functions; the package is published, built, and unit tested independently.
 Sui Primitives Behind SmartSplit
 
-##Primitives SmartSplit Uses
+## Primitives SmartSplit Uses
 SmartSplit uses four key Sui ecosystem primitives. Each one solves a different part of the group-payment experience.
 
 1. Sui Programmable Transaction Blocks (PTBs)

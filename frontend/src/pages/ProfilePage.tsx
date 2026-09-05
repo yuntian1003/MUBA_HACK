@@ -11,7 +11,7 @@ import {
   LinkIcon, EmptyBoxIcon, EmailIcon,
 } from '../components/Icons';
 import { AVATAR_COLORS } from '../constants';
-import { upsertUser, fetchUser } from '../api';
+import { upsertUser, fetchUser, fetchUsers } from '../api';
 import { useSuiNSName } from '../hooks/useSuiNS';
 import { useZkLogin } from '../hooks/useZkLogin';
 

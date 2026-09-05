@@ -34,6 +34,8 @@ export interface Member {
   email?: string;
   phone?: string;
   suins?: string;
+  linkedWalletAddress?: string;
+  linkedZkAddress?: string;
 }
 
 // Utility to map an ApiUser → frontend Member
@@ -46,14 +48,22 @@ export function apiUserToMember(u: any): Member {
       avatarColor: '#9F9DF3',
     };
   }
-  const addr = u.address || u.walletAddress || '';
+  // Prefer the linked on-chain Sui wallet address (e.g. Slush / Sui Wallet)
+  // so payments and split funds land directly in the recipient's wallet extension!
+  const destinationAddr = (u.linkedWalletAddress && u.linkedWalletAddress.startsWith('0x'))
+    ? u.linkedWalletAddress
+    : (u.walletAddress || u.address || '');
+  const origAddr = u.address || u.walletAddress || destinationAddr || '';
+
   return {
-    id: addr || 'user_' + Math.random(),
-    name: u.nickname || u.name || (u.email ? u.email.split('@')[0] : (u.suins || (addr ? addr.slice(0, 8) + '…' : 'Member'))),
-    walletAddress: addr,
+    id: origAddr || 'user_' + Math.random(),
+    name: u.nickname || u.name || (u.email ? u.email.split('@')[0] : (u.suins || (origAddr ? origAddr.slice(0, 8) + '…' : 'Member'))),
+    walletAddress: destinationAddr,
     avatarColor: u.avatarColor || '#9F9DF3',
     email: u.email,
     suins: u.suins,
+    linkedWalletAddress: u.linkedWalletAddress,
+    linkedZkAddress: u.linkedZkAddress,
   };
 }
 

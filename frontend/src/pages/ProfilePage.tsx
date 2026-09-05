@@ -57,6 +57,49 @@ export function ProfilePage() {
   const [copiedLinked, setCopiedLinked] = useState(false);
   const [saveMsg, setSaveMsg] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
+  const [manualWalletInput, setManualWalletInput] = useState('');
+  const [showManualWalletInput, setShowManualWalletInput] = useState(false);
+  const [manualWalletError, setManualWalletError] = useState('');
+
+  async function handleSaveManualWallet() {
+    const cleanAddr = manualWalletInput.trim().toLowerCase();
+    if (!cleanAddr.startsWith('0x') || cleanAddr.length < 20) {
+      setManualWalletError('Please enter a valid Sui address (starts with 0x)');
+      return;
+    }
+    if (account && cleanAddr === account.address.toLowerCase()) {
+      setManualWalletError('Cannot link zkLogin address to itself');
+      return;
+    }
+    setManualWalletError('');
+    setLinkedWalletAddress(cleanAddr);
+    localStorage.setItem(`linkedWallet-${account?.address}`, cleanAddr);
+    localStorage.setItem('linkedWalletAddress', cleanAddr);
+    setShowManualWalletInput(false);
+    setManualWalletInput('');
+
+    if (account?.address) {
+      await upsertUser(account.address, displayName || zkAccount?.name || 'Friend', selectedColor, email || zkAccount?.email, {
+        linkedWalletAddress: cleanAddr,
+      }).catch(console.error);
+      queryClient.invalidateQueries({ queryKey: ['my-profile'] });
+    }
+  }
+
+  async function handleUnlinkWallet() {
+    setLinkedWalletAddress('');
+    if (account?.address) {
+      localStorage.removeItem(`linkedWallet-${account.address}`);
+    }
+    localStorage.removeItem('linkedWalletAddress');
+    if (account?.address) {
+      await upsertUser(account.address, displayName || zkAccount?.name || 'Friend', selectedColor, email || zkAccount?.email, {
+        linkedWalletAddress: '',
+      }).catch(console.error);
+      queryClient.invalidateQueries({ queryKey: ['my-profile'] });
+    }
+  }
+
   const userHandle = displayName?.trim() || (email ? email.split('@')[0] : '') || zkAccount?.name || '';
   // Real on-chain resolved name or database registered .sui domain only, no spaces or fake domains
   const effectiveSuiNS = suinsDomainName || savedSuiNS || (userHandle?.toLowerCase().endsWith('.sui') && !userHandle.includes(' ') ? userHandle.toLowerCase() : null);
@@ -563,8 +606,18 @@ export function ProfilePage() {
                 </div>
 
                 {(walletAccount?.address || linkedWalletAddress) ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span className="text-xs color-text3">Slush Wallet On-Chain Address</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span className="text-xs color-text3">Slush / Sui Wallet On-Chain Address</span>
+                      <button
+                        type="button"
+                        onClick={handleUnlinkWallet}
+                        className="btn btn-ghost btn-sm"
+                        style={{ padding: '2px 6px', fontSize: '0.72rem', color: '#c0392b' }}
+                      >
+                        Unlink
+                      </button>
+                    </div>
                     <button
                       type="button"
                       onClick={async () => {
@@ -595,15 +648,53 @@ export function ProfilePage() {
                         ? <CheckCircleIcon size={14} color="#3a7a3c" strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
                         : <CopyIcon size={14} color="var(--text-3)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />}
                     </button>
+                    <p className="text-xs" style={{ color: '#256328', margin: 0, fontWeight: 500 }}>
+                      ✓ Payments to your account will automatically be sent to this wallet extension!
+                    </p>
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <p className="text-xs color-text3" style={{ margin: 0, lineHeight: 1.4 }}>
-                      Connect your Slush wallet while signed in to link them. Your SuiNS domain and on-chain contacts will be shared across both logins.
+                      Link your Sui wallet (Slush Wallet) so friends can pay you directly into your browser extension.
                     </p>
-                    <div style={{ alignSelf: 'flex-start' }}>
-                      <ConnectButton />
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ alignSelf: 'flex-start' }}>
+                        <ConnectButton />
+                      </div>
+                      <span className="text-xs color-text3">or</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowManualWalletInput(!showManualWalletInput)}
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '0.78rem', padding: '6px 12px', borderRadius: 10 }}
+                      >
+                        {showManualWalletInput ? 'Cancel manual entry' : 'Paste Address Manually'}
+                      </button>
                     </div>
+
+                    {showManualWalletInput && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                        <input
+                          className="input text-xs"
+                          placeholder="e.g. 0x582c742099bd..."
+                          value={manualWalletInput}
+                          onChange={(e) => setManualWalletInput(e.target.value)}
+                          style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}
+                        />
+                        {manualWalletError && (
+                          <span className="text-xs" style={{ color: '#c0392b' }}>⚠️ {manualWalletError}</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleSaveManualWallet}
+                          className="btn btn-primary btn-sm"
+                          style={{ alignSelf: 'flex-start', padding: '6px 14px', fontSize: '0.8rem' }}
+                        >
+                          Save &amp; Link Wallet
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

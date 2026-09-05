@@ -560,15 +560,62 @@ app.get('/api/users/:owner/friends', async (req, res) => {
     }
 
     let friends = Array.from(friendsMap.values());
+
+    // Enrich each friend with their latest user profile (linkedWalletAddress, linkedZkAddress, latest suins)
+    const enrichedFriends = await Promise.all(
+      friends.map(async (f: any) => {
+        const friendAddr = (f.address || '').toLowerCase().trim();
+        const friendEmail = (f.email || '').toLowerCase().trim();
+        if (!friendAddr && !friendEmail) return f;
+
+        let userDocData: any = null;
+        if (hasFirebaseCredentials) {
+          try {
+            if (friendAddr) {
+              const doc = await db.collection('users').doc(friendAddr).get();
+              if (doc.exists) userDocData = doc.data();
+            }
+            if (!userDocData && friendEmail) {
+              const snap = await db.collection('users').where('email', '==', friendEmail).limit(1).get();
+              if (!snap.empty) userDocData = snap.docs[0].data();
+            }
+          } catch (err) {}
+        } else {
+          if (friendAddr) userDocData = memoryUsers.get(friendAddr);
+          if (!userDocData && friendEmail) {
+            for (const u of memoryUsers.values()) {
+              if (u.email && u.email.toLowerCase().trim() === friendEmail) {
+                userDocData = u;
+                break;
+              }
+            }
+          }
+        }
+
+        if (userDocData) {
+          return {
+            ...f,
+            nickname: f.nickname || userDocData.nickname,
+            suins: userDocData.suins || f.suins,
+            linkedWalletAddress: userDocData.linkedWalletAddress || f.linkedWalletAddress,
+            linkedZkAddress: userDocData.linkedZkAddress || f.linkedZkAddress,
+          };
+        }
+        return f;
+      })
+    );
+
+    let result = enrichedFriends;
     if (q) {
-      friends = friends.filter((f: any) =>
+      result = result.filter((f: any) =>
         (f.nickname && f.nickname.toLowerCase().includes(q)) ||
         (f.address && f.address.toLowerCase().includes(q)) ||
+        (f.linkedWalletAddress && f.linkedWalletAddress.toLowerCase().includes(q)) ||
         (f.email && f.email.toLowerCase().includes(q)) ||
         (f.suins && f.suins.toLowerCase().includes(q))
       );
     }
-    res.json(friends);
+    res.json(result);
   } catch (e) {
     console.error('Error fetching friends:', e);
     res.status(500).json({ error: 'Failed to fetch friends' });

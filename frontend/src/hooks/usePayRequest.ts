@@ -4,7 +4,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { useCurrentAccount, useCurrentClient, useDAppKit, useWallets } from '@mysten/dapp-kit-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { MIST_PER_SUI } from '../constants';
-import { updatePaymentRequest } from '../api';
+import { updatePaymentRequest, fetchUser } from '../api';
 import type { PaymentRequest } from '../types';
 
 export function usePayRequest() {
@@ -58,9 +58,19 @@ export function usePayRequest() {
     }
 
     try {
+      let targetAddress = request.requesterAddress.trim();
+      try {
+        const userProfile = await fetchUser(targetAddress);
+        if (userProfile?.linkedWalletAddress && userProfile.linkedWalletAddress.startsWith('0x')) {
+          targetAddress = userProfile.linkedWalletAddress.trim();
+        }
+      } catch (e) {
+        // fallback to original targetAddress
+      }
+
       const tx = new Transaction();
       const [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(mistAmount)]);
-      tx.transferObjects([coin], tx.pure.address(request.requesterAddress.trim()));
+      tx.transferObjects([coin], tx.pure.address(targetAddress));
 
       const txResult = await dAppKit.signAndExecuteTransaction({
         transaction: tx,

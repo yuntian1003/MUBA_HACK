@@ -4,6 +4,7 @@ import { useCurrentAccount, useCurrentClient, useDAppKit, useWallets } from '@my
 import { useQueryClient } from '@tanstack/react-query';
 import type { Member } from '../types';
 import { MIST_PER_SUI } from '../constants';
+import { fetchUser } from '../api';
 
 
 export interface RecipientShare {
@@ -100,7 +101,20 @@ export function useSplitTransaction() {
 
       // Atomically transfer each allocated coin to its designated recipient
       for (let i = 0; i < shares.length; i++) {
-        const targetAddress = shares[i].member.walletAddress.trim();
+        let targetAddress = (shares[i].member.linkedWalletAddress || shares[i].member.walletAddress || '').trim();
+
+        // If recipient has a linked on-chain Sui wallet (Slush / Sui Wallet), resolve it so payment arrives in their wallet extension
+        if (!shares[i].member.linkedWalletAddress && targetAddress.startsWith('0x')) {
+          try {
+            const userProfile = await fetchUser(targetAddress);
+            if (userProfile?.linkedWalletAddress && userProfile.linkedWalletAddress.startsWith('0x')) {
+              targetAddress = userProfile.linkedWalletAddress.trim();
+            }
+          } catch (e) {
+            // fallback to original targetAddress
+          }
+        }
+
         tx.transferObjects(
           [splitCoins[i]],
           tx.pure.address(targetAddress)

@@ -29,6 +29,14 @@ export function HistoryPage() {
   const walletAccount = useCurrentAccount();
   const { zkAccount } = useZkLogin();
   const ownerAddress = (walletAccount?.address ?? zkAccount?.address ?? '').toLowerCase().trim();
+  const linkedAddresses = Array.from(new Set([
+    walletAccount?.address,
+    zkAccount?.address,
+    localStorage.getItem('linkedZkAddress'),
+    localStorage.getItem('linkedWalletAddress'),
+    localStorage.getItem(`linkedZk-${ownerAddress}`),
+    localStorage.getItem(`linkedWallet-${ownerAddress}`),
+  ].filter((address): address is string => !!address && address.trim().toLowerCase() !== ownerAddress)));
 
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabType>('outgoing');
@@ -45,8 +53,8 @@ export function HistoryPage() {
 
   // ── Fetch Payment Requests ──────────────────────────────────
   const { data, isLoading } = useQuery({
-    queryKey: ['payment-requests-history', ownerAddress, effectiveEmail],
-    queryFn: () => fetchPaymentRequests(ownerAddress, effectiveEmail),
+    queryKey: ['payment-requests-history', ownerAddress, linkedAddresses, effectiveEmail],
+    queryFn: () => fetchPaymentRequests(ownerAddress, effectiveEmail, linkedAddresses),
     enabled: !!ownerAddress,
     refetchInterval: 3000,
   });

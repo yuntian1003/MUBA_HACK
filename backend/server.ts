@@ -75,14 +75,15 @@ app.get('/api/ping', (req, res) => {
 
 // ------------------- Central Identity Aggregator -------------------
 // Discovers all linked addresses (zkLogin + wallet) and emails for a user
-async function getAllLinkedIdentities(query: { address?: string; email?: string }): Promise<{ addresses: Set<string>; emails: Set<string> }> {
+async function getAllLinkedIdentities(query: { address?: string | string[]; email?: string }): Promise<{ addresses: Set<string>; emails: Set<string> }> {
   const addresses = new Set<string>();
   const emails = new Set<string>();
 
-  if (query.address) {
-    const a = query.address.toLowerCase().trim();
-    if (a) addresses.add(a);
-  }
+  const queryAddresses = Array.isArray(query.address) ? query.address : [query.address];
+  queryAddresses.forEach((address) => {
+    const normalized = address?.toLowerCase().trim();
+    if (normalized) addresses.add(normalized);
+  });
   if (query.email) {
     const e = query.email.toLowerCase().trim();
     if (e) emails.add(e);
@@ -735,21 +736,24 @@ app.post('/api/payment-requests', async (req, res) => {
 
 app.get('/api/payment-requests', async (req, res) => {
   try {
-    const queryAddr = (req.query.address as string || '').toLowerCase().trim();
+    const queryAddresses = (Array.isArray(req.query.address) ? req.query.address : [req.query.address])
+      .filter((address): address is string => typeof address === 'string')
+      .map((address) => address.toLowerCase().trim())
+      .filter(Boolean);
     const queryEmail = (req.query.email as string || '').toLowerCase().trim();
     const all = hasFirebaseCredentials
       ? (await db.collection('payment_requests').get()).docs.map((d: any) => d.data())
       : Array.from(memoryPaymentRequests.values());
 
-    if (!queryAddr && !queryEmail) {
+    if (queryAddresses.length === 0 && !queryEmail) {
       return res.json({ incoming: all, outgoing: [] });
     }
 
     const { addresses: validAddresses, emails: validEmails } = await getAllLinkedIdentities({
-      address: queryAddr,
+      address: queryAddresses,
       email: queryEmail,
     });
-    if (queryAddr) validAddresses.add(queryAddr);
+    queryAddresses.forEach((address) => validAddresses.add(address));
     if (queryEmail) validEmails.add(queryEmail);
 
     const incoming = all

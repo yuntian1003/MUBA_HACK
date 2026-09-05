@@ -103,7 +103,10 @@ export async function createPaymentRequests(requests: Array<{
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests }),
   });
-  if (!res.ok) throw new Error('Failed to create payment requests');
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => null);
+    throw new Error(errorData?.details || errorData?.error || 'Failed to create payment requests');
+  }
   return res.json();
 }
 

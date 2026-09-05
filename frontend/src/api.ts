@@ -107,9 +107,18 @@ export async function createPaymentRequests(requests: Array<{
   return res.json();
 }
 
-export async function fetchPaymentRequests(address: string, email?: string): Promise<{ incoming: any[]; outgoing: any[] }> {
+export async function fetchPaymentRequests(
+  address: string,
+  email?: string,
+  additionalAddresses: string[] = [],
+): Promise<{ incoming: any[]; outgoing: any[] }> {
   const params = new URLSearchParams();
-  if (address) params.append('address', address);
+  const addresses = new Set(
+    [address, ...additionalAddresses]
+      .map((value) => value.toLowerCase().trim())
+      .filter(Boolean),
+  );
+  addresses.forEach((value) => params.append('address', value));
   if (email) params.append('email', email);
   const res = await fetch(`${BASE_URL}/payment-requests?${params.toString()}`);
   if (!res.ok) throw new Error('Failed to fetch payment requests');

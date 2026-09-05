@@ -40,148 +40,134 @@ The Move package also contains reusable `execute_equal_split` and `execute_custo
 Sui Primitives Behind SmartSplit
 
 ## Primitives SmartSplit Uses
-SmartSplit uses four key Sui ecosystem primitives. Each one solves a different part of the group-payment experience.
 
-1. Sui Programmable Transaction Blocks (PTBs)
+SmartSplit combines four Sui ecosystem primitives to make group payments easier to use, while keeping payment execution non-custodial.
 
-The payment execution layer.
+| Primitive    | What it does in SmartSplit                                           |
+| ------------ | -------------------------------------------------------------------- |
+| **Sui PTBs** | Execute multi-recipient payments in one wallet-approved transaction. |
+| **zkLogin**  | Provides Web2-style onboarding and Sui identity.                     |
+| **SuiNS**    | Makes recipient addresses human-readable.                            |
+| **Walrus**   | Stores receipt images through decentralized storage.                 |
 
-PTBs allow SmartSplit to compose multiple payment operations into a single programmable transaction.
+### 1) Sui Programmable Transaction Blocks (PTBs)
 
-Instead of asking the payer to approve each recipient separately, SmartSplit prepares the complete payment flow and asks the connected wallet to sign once.
+**The payment execution layer.**
 
-The current frontend uses a direct PTB with the wallet's gas coin:
+SmartSplit uses PTBs to compose multiple payment operations into a single programmable transaction.
 
-Payer's gas coin
-      |
-      v
-Split into requested shares
-      |
-      +----> Recipient A
-      |
-      +----> Recipient B
-      |
-      +----> Recipient C
+The current frontend splits the payer's gas coin into the requested shares and transfers them to multiple recipients.
 
-This enables:
-
-Multi-recipient transfers
-Equal and custom payment amounts
+```text
+Payer
+  │
+  ▼
 One wallet approval
-Atomic execution
-Non-custodial payment settlement
+  │
+  ▼
+Sui PTB
+  ├──► Recipient A
+  ├──► Recipient B
+  └──► Recipient C
+```
 
-Why it matters: PTBs turn a multi-payment workflow into one programmable on-chain transaction.
+**What this enables:**
 
-One signature. Multiple payments.
+* Multi-recipient transfers
+* Equal and custom splits
+* One wallet approval
+* Atomic execution
+* Non-custodial settlement
 
-2. zkLogin
+> **One signature. Multiple payments.**
 
-The onboarding layer.
+### 2) zkLogin
+
+**The onboarding layer.**
 
 zkLogin allows users to authenticate through familiar Web2 identity providers such as Google without requiring them to begin with a traditional seed phrase.
 
-In SmartSplit, zkLogin is used to:
+SmartSplit uses zkLogin to:
 
-Authenticate users through Google
-Derive a deterministic Sui address
-Retrieve a zkLogin proof
-Link a zkLogin identity to a user profile
+* Authenticate users through Google
+* Derive a deterministic Sui address
+* Retrieve a zkLogin proof
+* Link a zkLogin identity to a user profile
 
-This helps reduce the onboarding barrier for users who are new to Web3.
+The current implementation is a **zkLogin prototype**. Authentication and address derivation are supported, but proof-based transaction signing is not yet connected to the payment executor. Payment signing currently uses a connected Sui-compatible wallet.
 
-The current implementation is a zkLogin prototype. Authentication and address derivation are supported, but proof-based transaction signing is not yet connected to the payment executor. Payment signing currently uses a connected Sui-compatible wallet.
+> **Web2-style onboarding. Sui-native identity.**
 
-Why it matters: zkLogin helps SmartSplit feel accessible to Web2 users while preserving a Sui-based identity.
+### 3) SuiNS
 
-Web2-style onboarding. Sui-native identity.
-
-3. SuiNS
-
-The identity and recipient-discovery layer.
+**The identity layer.**
 
 SuiNS provides human-readable names for Sui addresses.
 
-Instead of asking users to copy and compare long hexadecimal wallet addresses, SmartSplit can resolve names such as:
+Instead of copying long hexadecimal addresses, users can search for names such as:
 
+```text
 alex.sui
-
-to the corresponding Sui address.
+```
 
 SmartSplit uses SuiNS to:
 
-Resolve .sui names to addresses
-Look up a primary name from an address
-Find friends and recipients using readable identities
-Reduce errors when selecting payment recipients
+* Resolve `.sui` names to addresses
+* Look up a primary name from an address
+* Find friends and recipients using readable identities
+* Reduce errors when selecting payment recipients
 
-Why it matters: SuiNS makes multi-party payments easier to understand and less dependent on long wallet addresses.
+> **Pay people, not hexadecimal strings.**
 
-Pay people, not hexadecimal strings.
+### 4) Walrus
 
-4. Walrus
-
-The receipt-storage layer.
+**The receipt-storage layer.**
 
 Walrus provides decentralized storage for receipt images and other application data.
 
 In SmartSplit, users can upload a receipt image to Walrus Testnet. The browser then uses Tesseract OCR to detect likely totals from the uploaded receipt.
 
-The workflow is:
-
+```text
 Receipt image
-      |
-      v
-Walrus Testnet upload
-      |
-      v
+      │
+      ▼
+Walrus Testnet
+      │
+      ▼
 Receipt reference
-      |
-      v
+      │
+      ▼
 Browser-side OCR
-      |
-      v
+      │
+      ▼
 Detected bill total
+```
 
 SmartSplit uses Walrus for:
 
-Decentralized receipt uploads
-Receipt references
-Receipt evidence associated with the expense workflow
+* Decentralized receipt uploads
+* Receipt references
+* Receipt evidence associated with the expense workflow
 
 OCR runs locally in the browser. Receipt metadata is not currently written on-chain or attached to payment requests.
 
-Why it matters: Walrus gives SmartSplit a decentralized way to handle receipt evidence without making the payment flow dependent on a centralized file-storage service.
+> **Receipts stored separately. Payments settled on Sui.**
 
-Receipts stored separately. Payments settled on Sui.
+### Why These Primitives Matter
 
-How the Primitives Work Together
+Each primitive solves a different part of the group-payment experience:
 
-SmartSplit combines these primitives into one group-payment experience:
+```text
+zkLogin  →  Accessible onboarding
+SuiNS    →  Human-readable identities
+Walrus   →  Decentralized receipt storage
+PTBs     →  Atomic multi-recipient payments
+```
 
-                    SmartSplit
-                         |
-        +----------------+----------------+
-        |                |                |
-      zkLogin           SuiNS           Walrus
-   User onboarding   Human-readable   Receipt storage
-   and identity      recipient names   and evidence
-        |                |                |
-        +----------------+----------------+
-                         |
-                         v
-                  Sui PTB
-                         |
-                         v
-              One wallet approval
-                         |
-                         v
-             Atomic multi-recipient
-                  payment
+Together, they help SmartSplit turn a complicated payment workflow into a simple experience:
 
-The result is a simple workflow:
+**Choose → Split → Sign once → Everyone gets paid.**
 
-Connect → Identify recipients → Upload receipt → Split → Sign once → Everyone gets paid.
 ## Architecture
 
 ```text

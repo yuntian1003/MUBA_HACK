@@ -98,23 +98,17 @@ export function ProfilePage() {
       }
 
       const activeWallet = walletAccount?.address || '';
-      const realZk = zkAccount?.address || u?.linkedZkAddress || localStorage.getItem('linkedZkAddress') || '';
-      
-      const testPrefixes = ['0x1248a', '0x36e9d', '0xa91cf'];
-      const isTestAddr = (addr: string) => testPrefixes.some(p => addr.toLowerCase().startsWith(p));
-      
-      let backendWallet = u?.linkedWalletAddress && !isTestAddr(u.linkedWalletAddress) ? u.linkedWalletAddress : '';
+      const realZk = zkAccount?.address || u?.linkedZkAddress || localStorage.getItem(`linkedZk-${account.address}`) || '';
 
-      // If zkLogin user has no linked wallet yet, find real wallet address (e.g. 0x582c74...)
+      // If zkLogin user has no linked wallet yet, search for a wallet account registered under the same email
+      let backendWallet = u?.linkedWalletAddress || '';
       if (account.isZk && !backendWallet && !activeWallet && currentEmail) {
         try {
           const users = await fetchUsers(currentEmail);
           const match = users.find((mu: any) =>
-            mu.address?.toLowerCase() === '0x582c742099bd92fb471e45949bfc94d4f0e6e756a05226355621fc7757bae7a1'
-          ) || users.find((mu: any) =>
             mu.email?.toLowerCase() === currentEmail.toLowerCase() &&
             mu.address?.toLowerCase() !== account.address.toLowerCase() &&
-            !isTestAddr(mu.address || '')
+            !mu.address?.toLowerCase().startsWith('0x36ac3d') // exclude self zkLogin addr
           );
           if (match?.address) {
             backendWallet = match.address;
@@ -123,14 +117,13 @@ export function ProfilePage() {
         } catch (e) {}
       }
 
-      const rawStoredWallet = localStorage.getItem('linkedWalletAddress') || '';
-      const storedWallet = isTestAddr(rawStoredWallet) ? '' : rawStoredWallet;
-      const realWallet = activeWallet || backendWallet || storedWallet || '0x582c742099bd92fb471e45949bfc94d4f0e6e756a05226355621fc7757bae7a1';
+      const storedWallet = localStorage.getItem(`linkedWallet-${account.address}`) || '';
+      const realWallet = activeWallet || backendWallet || storedWallet || '';
 
       if (activeWallet) {
-        localStorage.setItem('linkedWalletAddress', activeWallet);
+        localStorage.setItem(`linkedWallet-${account.address}`, activeWallet);
       } else if (realWallet) {
-        localStorage.setItem('linkedWalletAddress', realWallet);
+        localStorage.setItem(`linkedWallet-${account.address}`, realWallet);
       }
 
       setLinkedZkAddress(realZk);

@@ -105,16 +105,23 @@ VITE_PACKAGE_ID=0x24e97be01d4bb8762ad5e4175f1b169034a1b3c51288e6f4a7030edbda49c1
 VITE_GOOGLE_CLIENT_ID=your-google-oauth-client-id
 ```
 
+The Google OAuth client must allow this authorized JavaScript origins during local development:
+```text
+http://localhost:5173
+https://muba-hack.vercel.app
+```
+
 The Google OAuth client must allow this redirect URI during local development:
 
 ```text
 http://localhost:5173/auth/callback
+https://muba-hack.vercel.app/auth/callback
 ```
 
 Optional overrides:
 
 ```env
-VITE_API_URL=http://localhost:3000
+VITE_API_URL=https://smartsplit-backend-g1zf.onrender.com
 VITE_WALRUS_PUBLISHER_URL=https://publisher.walrus-testnet.walrus.space
 VITE_WALRUS_AGGREGATOR_URL=https://aggregator.walrus-testnet.walrus.space
 ```

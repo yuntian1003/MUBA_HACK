@@ -169,6 +169,8 @@ Together, they help SmartSplit turn a complicated payment workflow into a simple
 **Choose → Split → Sign once → Everyone gets paid.**
 
 ## Architecture
+<img width="1236" height="489" alt="smartsplit" src="https://github.com/user-attachments/assets/ce986616-0ccf-4c2a-8639-c635fe127e60" />
+
 
 ```text
 React 19 + TypeScript + Vite frontend
